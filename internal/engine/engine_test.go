@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -166,4 +167,84 @@ func TestEngineChecksAtExpectedTimeAutomatically(t *testing.T) {
 	}
 	st, _ := e.State(it.ID)
 	t.Fatalf("expected an automatic check at 10:00 → late, got %s", st.Status)
+}
+
+// flakyFS serves one file and fails every call while broken is set.
+type flakyFS struct {
+	mu     sync.Mutex
+	broken bool
+	mod    time.Time
+}
+
+func (f *flakyFS) Stat(p string) (checker.FileInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.broken {
+		return checker.FileInfo{}, errors.New("hálózati hiba")
+	}
+	return checker.FileInfo{Path: p, Name: filepath.Base(p), ModTime: f.mod, Size: 10}, nil
+}
+
+func (f *flakyFS) ListFiles(string, func(string) string) ([]checker.FileInfo, error) {
+	return nil, errors.New("nem kell")
+}
+
+func (f *flakyFS) set(b bool) { f.mu.Lock(); f.broken = b; f.mu.Unlock() }
+
+func TestUnreachableNeedsConfirmation(t *testing.T) {
+	clk := &fakeClock{t: time.Date(2026, 10, 8, 7, 0, 0, 0, bud)}
+	fs := &flakyFS{mod: time.Date(2026, 10, 8, 6, 2, 0, 0, bud)}
+	var mu sync.Mutex
+	var events []Event
+	e := New(Config{
+		Checker:  checker.New(fs, checker.Options{Now: clk.Now, RetryDelays: []time.Duration{}}),
+		Loc:      bud,
+		Now:      clk.Now,
+		OnEvents: func(ev []Event) { mu.Lock(); events = append(events, ev...); mu.Unlock() },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+
+	it := model.NewItem()
+	it.Path = `\\EFS\Groups\BI\a.csv`
+	it.Schedule = schedule.Spec{Type: schedule.Daily, Times: []string{"06:00"}}
+	e.Configure([]model.Item{it}, calendar.Default, time.Minute, 2)
+	<-e.CheckNow()
+	if st, _ := e.State(it.ID); st.Status != model.StatusOK {
+		t.Fatalf("%s %s", st.Status, st.Reason)
+	}
+	transitions := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, ev := range events {
+			if ev.Kind == EvTransition {
+				n++
+			}
+		}
+		return n
+	}
+	base := transitions()
+
+	// One hiccup: still OK, re-check pending, no notification.
+	fs.set(true)
+	<-e.CheckNow()
+	st, _ := e.State(it.ID)
+	if st.Status != model.StatusOK || !st.Recheck || transitions() != base {
+		t.Fatalf("a single failure must not be shown: %+v", st)
+	}
+	// Recovered by the re-check: nothing happened.
+	fs.set(false)
+	<-e.CheckNow()
+	if st, _ = e.State(it.ID); st.Status != model.StatusOK || st.Recheck || transitions() != base {
+		t.Fatalf("%+v", st)
+	}
+	// Two failures in a row: unreachable.
+	fs.set(true)
+	<-e.CheckNow()
+	<-e.CheckNow()
+	if st, _ = e.State(it.ID); st.Status != model.StatusUnreachable || transitions() != base+1 {
+		t.Fatalf("second failure must be shown: %+v", st)
+	}
 }

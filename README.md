@@ -145,7 +145,9 @@ Minden számítás magyar idő (Europe/Budapest) szerint történik.
 Hálózati hiba esetén az elem **soha nem „Hiányzik”**, hanem „Elérhetetlen”.
 
 - **Időkorlát:** minden fájlművelet külön szálon fut időkorláttal (alapból 10 s), így a felület lassú megosztás esetén sem fagy le.
-- **Szerverenkénti megszakító:** ha például a `\\EFS-FSRHQ` nem válaszol, a program 30 mp-ig (ismétlődő hibánál egyre tovább, legfeljebb 5 percig) nem próbálkozik újra, és az összes ottani elemet „Elérhetetlen”-nek jelöli. Ilyenkor a lista tetején egy sáv jelzi a kiesést. Az „Ellenőrzés most” azonnal újrapróbálja.
+- **Kímélő lekérdezés:** egy szerver felé egyszerre legfeljebb 3 kérés fut, a többi **sorban vár** (nem hibázik). Az egy mappában lévő mintás elemek egyetlen mappalistázáson osztoznak.
+- **Újrapróbálás:** átmeneti hálózati hibánál (időtúllépés, megszakadt SMB-kapcsolat, foglalt szerver) a program 1, majd 3 másodperc múlva újra megnézi a fájlt. Ha így sem éri el, akkor sem vált azonnal: kb. 20 másodperc múlva még egyszer ellenőriz (a listában „újrapróbál…” címke), és **csak a második sikertelen kör után** lesz „Elérhetetlen”, és csak ekkor jön értesítés.
+- **Szerverenkénti megszakító:** ha például a `\\EFS-FSRHQ` **többször egymás után** sem válaszol, a program 30 mp-ig (ismétlődő hibánál egyre tovább, legfeljebb 5 percig) nem próbálkozik újra, és az összes ottani elemet „Elérhetetlen”-nek jelöli. Egyetlen lassú válasz ezt nem váltja ki. Ilyenkor a lista tetején egy sáv jelzi a kiesést. Az „Ellenőrzés most” azonnal újrapróbálja.
 - **Mappa vagy megosztás:** ha a mappa nem létezik, de maga a megosztás elérhető, az eredmény „Hiányzik (a mappa nem létezik)”. Ha a megosztás sem érhető el, „Elérhetetlen”.
 
 Az ellenőrzés alapból percenként fut, és ezen felül pontosan az elvárt időpontban és a határidő lejártakor is.

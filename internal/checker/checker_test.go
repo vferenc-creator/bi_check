@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -19,10 +20,19 @@ type fakeFS struct {
 	deny  map[string]bool     // lowercase path prefix → permission error
 	block chan struct{}
 	calls atomic.Int64
+	lists atomic.Int64
+	// optional behaviour for concurrency tests
+	delay    time.Duration // every call takes this long
+	failNext atomic.Int64  // the next N calls fail with eServerDown
+	hangPath map[string]bool
+	running  atomic.Int64
+	maxRun   atomic.Int64
 }
 
 func newFake() *fakeFS {
-	return &fakeFS{files: map[string]FileInfo{}, dirs: map[string]bool{}, down: map[string]error{}, hang: map[string]bool{}, deny: map[string]bool{}, block: make(chan struct{})}
+	f := &fakeFS{files: map[string]FileInfo{}, dirs: map[string]bool{}, down: map[string]error{}, hang: map[string]bool{}, deny: map[string]bool{}, hangPath: map[string]bool{}, block: make(chan struct{})}
+	f.failNext.Store(0)
+	return f
 }
 
 func (f *fakeFS) addFile(path string, mod time.Time, size int64) {
@@ -42,7 +52,26 @@ func server(p string) string {
 
 func (f *fakeFS) pre(p string) error {
 	f.calls.Add(1)
+	n := f.running.Add(1)
+	defer f.running.Add(-1)
+	for {
+		m := f.maxRun.Load()
+		if n <= m || f.maxRun.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	if f.failNext.Add(-1) >= 0 {
+		return &os.PathError{Op: "stat", Path: p, Err: eServerDown}
+	}
 	f.mu.Lock()
+	if f.hangPath[strings.ToLower(p)] {
+		f.mu.Unlock()
+		<-f.block
+		f.mu.Lock()
+	}
 	hang := f.hang[server(p)]
 	err := f.down[server(p)]
 	denied := false
@@ -84,6 +113,7 @@ func (f *fakeFS) Stat(p string) (FileInfo, error) {
 }
 
 func (f *fakeFS) ListFiles(dir string, join func(string) string) ([]FileInfo, error) {
+	f.lists.Add(1)
 	if err := f.pre(dir); err != nil {
 		return nil, err
 	}
@@ -146,7 +176,7 @@ func TestServerDownIsUnreachableAndOpensBreaker(t *testing.T) {
 	f.addFile(`\\EFS\Groups\BI\b.xlsx`, ref, 1)
 	f.down["EFS"] = eServerDown
 	clk := &clock{t: ref}
-	c := New(f, Options{Now: clk.Now})
+	c := New(f, Options{Now: clk.Now, Sleep: clk.Add})
 	r := c.Check(`\\EFS\Groups\BI\a.xlsx`, ref, false)
 	if r.Kind != Unreachable || !r.ServerProblem {
 		t.Fatalf("network error must not look like a missing file: %+v", r)
@@ -155,6 +185,9 @@ func TestServerDownIsUnreachableAndOpensBreaker(t *testing.T) {
 	r = c.Check(`\\EFS\Groups\BI\b.xlsx`, ref, false)
 	if r.Kind != Unreachable || f.calls.Load() != before {
 		t.Fatalf("breaker should answer without touching the share: %+v calls=%d→%d", r, before, f.calls.Load())
+	}
+	if calls := f.calls.Load(); calls != 3 {
+		t.Fatalf("expected 3 attempts (1 + 2 retries) before giving up, got %d", calls)
 	}
 	// Server comes back, breaker half-opens after the backoff.
 	delete(f.down, "EFS")
@@ -168,7 +201,7 @@ func TestBackoffGrows(t *testing.T) {
 	f := newFake()
 	f.down["X"] = eServerDown
 	clk := &clock{t: ref}
-	c := New(f, Options{Now: clk.Now, BackoffMin: 10 * time.Second, BackoffMax: 35 * time.Second})
+	c := New(f, Options{Now: clk.Now, BackoffMin: 10 * time.Second, BackoffMax: 35 * time.Second, FailThreshold: 1, RetryDelays: []time.Duration{}})
 	c.Check(`\\X\s\a.csv`, ref, false)
 	clk.Add(11 * time.Second)
 	c.Check(`\\X\s\a.csv`, ref, false) // 2nd failure → 20s
@@ -191,7 +224,7 @@ func TestTimeout(t *testing.T) {
 	f.addFile(`\\SLOW\s\a.csv`, ref, 1)
 	f.hang["SLOW"] = true
 	defer close(f.block)
-	c := New(f, Options{Timeout: 50 * time.Millisecond})
+	c := New(f, Options{Timeout: 50 * time.Millisecond, Sleep: func(time.Duration) {}})
 	start := time.Now()
 	r := c.Check(`\\SLOW\s\a.csv`, ref, false)
 	if r.Kind != Unreachable || time.Since(start) > 2*time.Second {
@@ -283,5 +316,101 @@ func TestOSFS(t *testing.T) {
 	missing := dir + string(os.PathSeparator) + "nodir" + string(os.PathSeparator) + "x.csv"
 	if r := c.Check(missing, ref, false); r.Kind != NotFound {
 		t.Fatalf("missing local folder: %+v", r)
+	}
+}
+
+// Many items on one server: calls beyond the per-server limit wait in line
+// instead of failing as "unreachable".
+func TestCallsQueueInsteadOfFailing(t *testing.T) {
+	f := newFake()
+	f.delay = 20 * time.Millisecond
+	for i := 0; i < 12; i++ {
+		f.addFile(fmt.Sprintf(`\\EFS\Groups\BI\r%d.csv`, i), ref, 1)
+	}
+	c := New(f, Options{MaxInflightPerHost: 2})
+	var wg sync.WaitGroup
+	results := make([]Result, 12)
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = c.Check(fmt.Sprintf(`\\EFS\Groups\BI\r%d.csv`, i), ref, false)
+		}(i)
+	}
+	wg.Wait()
+	for i, r := range results {
+		if r.Kind != Found {
+			t.Errorf("item %d: %+v", i, r)
+		}
+	}
+	if m := f.maxRun.Load(); m > 2 {
+		t.Fatalf("at most 2 parallel calls per server expected, saw %d", m)
+	}
+}
+
+// One slow answer must not make the other items on the server unreachable.
+func TestSingleTimeoutDoesNotOpenBreaker(t *testing.T) {
+	f := newFake()
+	f.addFile(`\\EFS\Groups\BI\slow.csv`, ref, 1)
+	f.addFile(`\\EFS\Groups\BI\ok.csv`, ref, 1)
+	f.hangPath[strings.ToLower(`\\EFS\Groups\BI\slow.csv`)] = true
+	defer close(f.block)
+	c := New(f, Options{Timeout: 30 * time.Millisecond, RetryDelays: []time.Duration{}})
+	if r := c.Check(`\\EFS\Groups\BI\slow.csv`, ref, false); r.Kind != Unreachable {
+		t.Fatalf("%+v", r)
+	}
+	if r := c.Check(`\\EFS\Groups\BI\ok.csv`, ref, false); r.Kind != Found {
+		t.Fatalf("a single timeout must not block the server: %+v", r)
+	}
+	if s := c.Servers(); s[0].Down {
+		t.Fatalf("breaker must stay closed: %+v", s)
+	}
+}
+
+// A dropped SMB session / momentary network error is retried.
+func TestTransientErrorIsRetried(t *testing.T) {
+	f := newFake()
+	f.addFile(`\\EFS\Groups\BI\a.csv`, ref, 7)
+	f.addFile(`\\EFS\Groups\BI\sales_1.csv`, ref, 8)
+	var slept []time.Duration
+	c := New(f, Options{Sleep: func(d time.Duration) { slept = append(slept, d) }})
+	f.failNext.Store(2)
+	if r := c.Check(`\\EFS\Groups\BI\a.csv`, ref, false); r.Kind != Found || r.File.Size != 7 {
+		t.Fatalf("%+v", r)
+	}
+	if len(slept) != 2 || slept[0] != time.Second || slept[1] != 3*time.Second {
+		t.Fatalf("retry delays: %v", slept)
+	}
+	f.failNext.Store(1)
+	if r := c.Check(`\\EFS\Groups\BI\sales_*.csv`, ref, false); r.Kind != Found {
+		t.Fatalf("pattern retry: %+v", r)
+	}
+	// A real "file not found" is not retried.
+	slept = nil
+	if r := c.Check(`\\EFS\Groups\BI\none.csv`, ref, false); r.Kind != NotFound || len(slept) != 0 {
+		t.Fatalf("%+v slept=%v", r, slept)
+	}
+}
+
+// Items in the same folder share one listing request.
+func TestConcurrentListingsShareOneRequest(t *testing.T) {
+	f := newFake()
+	f.delay = 30 * time.Millisecond
+	f.addFile(`\\EFS\exp\a_1.csv`, ref, 1)
+	f.addFile(`\\EFS\exp\b_1.csv`, ref, 1)
+	c := New(f, Options{})
+	var wg sync.WaitGroup
+	for _, p := range []string{`a_*.csv`, `b_*.csv`, `*.csv`, `a_*.csv`} {
+		wg.Add(1)
+		go func(p string) {
+			defer wg.Done()
+			if r := c.Check(`\\EFS\exp\`+p, ref, false); r.Kind != Found {
+				t.Errorf("%s: %+v", p, r)
+			}
+		}(p)
+	}
+	wg.Wait()
+	if n := f.lists.Load(); n != 1 {
+		t.Fatalf("expected 1 listing request, got %d", n)
 	}
 }

@@ -43,6 +43,10 @@ type ItemState struct {
 	// Acked: the user acknowledged the current problem (no more reminders
 	// until the next expected time).
 	Acked bool `json:"acked"`
+	// Recheck: the last check could not reach the file; before showing
+	// (and notifying) "unreachable" the engine looks once more shortly.
+	Recheck       bool   `json:"recheck,omitempty"`
+	RecheckReason string `json:"recheckReason,omitempty"`
 }
 
 // EventKind distinguishes engine events.
@@ -79,6 +83,9 @@ type Config struct {
 	OnChange func()
 	// SizeHistory returns recent arrival sizes (newest first) for an item.
 	SizeHistory func(id string) []int64
+	// ConfirmUnreachable is the delay of the confirming re-check before an
+	// item turns unreachable (0 = 20s, negative = report right away).
+	ConfirmUnreachable time.Duration
 }
 
 type entry struct {
@@ -89,6 +96,8 @@ type entry struct {
 	next     time.Time // next periodic check
 	force    bool
 	waiters  []chan struct{}
+	// unconfirmed: the previous check was unreachable but not shown yet.
+	unconfirmed bool
 }
 
 // Engine schedules and runs checks.
@@ -121,6 +130,9 @@ func New(cfg Config) *Engine {
 	}
 	if cfg.SizeHistory == nil {
 		cfg.SizeHistory = func(string) []int64 { return nil }
+	}
+	if cfg.ConfirmUnreachable == 0 {
+		cfg.ConfirmUnreachable = 20 * time.Second
 	}
 	return &Engine{
 		cfg:         cfg,
@@ -397,6 +409,7 @@ func (e *Engine) checkOne(en *entry) {
 
 	ns := old
 	ns.Checking = false
+	ns.Recheck, ns.RecheckReason = false, ""
 	ns.Status = out.Status
 	ns.Reason = out.Reason
 	ns.Expected = exp
@@ -442,8 +455,21 @@ func (e *Engine) checkOne(en *entry) {
 	e.mu.Lock()
 	var waiters []chan struct{}
 	if cur := e.entries[item.ID]; cur == en {
-		en.state = ns
-		en.next = now.Add(e.interval)
+		if ns.Status == model.StatusUnreachable && old.Status != model.StatusUnreachable &&
+			!en.unconfirmed && e.cfg.ConfirmUnreachable > 0 {
+			// Network shares hiccup (dropped SMB session, busy server):
+			// keep the previous status and look again soon; only a second
+			// failure in a row is shown and notified.
+			en.unconfirmed = true
+			en.state.Checking = false
+			en.state.Recheck, en.state.RecheckReason = true, ns.Reason
+			en.next = now.Add(e.cfg.ConfirmUnreachable)
+			events = nil
+		} else {
+			en.unconfirmed = false
+			en.state = ns
+			en.next = now.Add(e.interval)
+		}
 		waiters = en.waiters
 		en.waiters = nil
 	} else {

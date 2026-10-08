@@ -35,16 +35,24 @@ type Result struct {
 	ServerProblem bool       `json:"serverProblem,omitempty"`
 	CheckedAt     time.Time  `json:"checkedAt"`
 	TookMs        int64      `json:"tookMs"`
+
+	retry bool // transient failure worth another attempt
 }
 
 // Options configure a Checker.
 type Options struct {
 	Timeout            time.Duration // per file system call (default 10s)
-	MaxInflightPerHost int           // concurrent calls per server (default 4)
-	BackoffMin         time.Duration // breaker open time after the 1st failure (default 30s)
+	MaxInflightPerHost int           // concurrent calls per server (default 3); further calls wait in line
+	QueueWait          time.Duration // max wait for a free slot (default 3×Timeout)
+	FailThreshold      int           // consecutive failures that open the breaker (default 3)
+	BackoffMin         time.Duration // breaker open time when it first opens (default 30s)
 	BackoffMax         time.Duration // cap (default 5m)
 	ListCacheTTL       time.Duration // share directory listings between items (default 5s)
-	Now                func() time.Time
+	// RetryDelays are the pauses before re-trying a check that failed with
+	// a transient network error (nil = 1s, 3s; empty = no retry).
+	RetryDelays []time.Duration
+	Now         func() time.Time
+	Sleep       func(time.Duration)
 }
 
 // Checker performs checks; safe for concurrent use.
@@ -55,17 +63,25 @@ type Checker struct {
 	mu      sync.Mutex
 	servers map[string]*serverState
 	lists   map[string]listEntry
+	listing map[string]*listCall // listings in progress (one request per folder)
 }
 
 type serverState struct {
-	inflight  int
-	failures  int
+	slots     chan struct{} // one token per running call (also abandoned, timed-out ones)
+	failures  int           // consecutive failures
 	openUntil time.Time
 	lastErr   string
+	opened    chan struct{} // closed when the breaker opens (wakes queued calls)
 }
 
 type listEntry struct {
 	at    time.Time
+	files []FileInfo
+	err   error
+}
+
+type listCall struct {
+	done  chan struct{}
 	files []FileInfo
 	err   error
 }
@@ -79,7 +95,10 @@ func New(fs FS, opt Options) *Checker {
 		opt.Timeout = 10 * time.Second
 	}
 	if opt.MaxInflightPerHost <= 0 {
-		opt.MaxInflightPerHost = 4
+		opt.MaxInflightPerHost = 3
+	}
+	if opt.FailThreshold <= 0 {
+		opt.FailThreshold = 3
 	}
 	if opt.BackoffMin <= 0 {
 		opt.BackoffMin = 30 * time.Second
@@ -90,10 +109,16 @@ func New(fs FS, opt Options) *Checker {
 	if opt.ListCacheTTL == 0 {
 		opt.ListCacheTTL = 5 * time.Second
 	}
+	if opt.RetryDelays == nil {
+		opt.RetryDelays = []time.Duration{time.Second, 3 * time.Second}
+	}
 	if opt.Now == nil {
 		opt.Now = time.Now
 	}
-	return &Checker{fs: fs, opt: opt, servers: map[string]*serverState{}, lists: map[string]listEntry{}}
+	if opt.Sleep == nil {
+		opt.Sleep = time.Sleep
+	}
+	return &Checker{fs: fs, opt: opt, servers: map[string]*serverState{}, lists: map[string]listEntry{}, listing: map[string]*listCall{}}
 }
 
 // SetTimeout changes the per-call timeout.
@@ -118,34 +143,57 @@ type breakerOpenError struct {
 
 func (e breakerOpenError) Error() string { return "breaker open" }
 
-// do runs op against server with timeout and circuit breaker.
-func (c *Checker) do(server string, op func() error) error {
-	c.mu.Lock()
+// state returns the server's state; c.mu must be held.
+func (c *Checker) state(server string) *serverState {
 	st := c.servers[server]
 	if st == nil {
-		st = &serverState{}
+		st = &serverState{slots: make(chan struct{}, c.opt.MaxInflightPerHost), opened: make(chan struct{})}
 		c.servers[server] = st
 	}
-	now := c.opt.Now()
-	if now.Before(st.openUntil) {
+	return st
+}
+
+// do runs op against server with timeout and circuit breaker. At most
+// MaxInflightPerHost calls run against one server at a time; the others
+// wait in line (shares dislike bursts of parallel requests).
+func (c *Checker) do(server string, op func() error) error {
+	c.mu.Lock()
+	st := c.state(server)
+	if c.opt.Now().Before(st.openUntil) {
 		e := breakerOpenError{until: st.openUntil, last: st.lastErr}
 		c.mu.Unlock()
 		return e
 	}
-	if st.inflight >= c.opt.MaxInflightPerHost {
-		c.mu.Unlock()
-		return errBusy
-	}
-	st.inflight++
+	slots, opened := st.slots, st.opened
 	timeout := c.opt.Timeout
+	queueWait := c.opt.QueueWait
+	if queueWait <= 0 {
+		queueWait = 3 * timeout
+	}
 	c.mu.Unlock()
+
+	select {
+	case slots <- struct{}{}:
+	default:
+		wait := time.NewTimer(queueWait)
+		select {
+		case slots <- struct{}{}:
+			wait.Stop()
+		case <-opened:
+			wait.Stop()
+			c.mu.Lock()
+			e := breakerOpenError{until: st.openUntil, last: st.lastErr}
+			c.mu.Unlock()
+			return e
+		case <-wait.C:
+			return errBusy
+		}
+	}
 
 	done := make(chan error, 1)
 	go func() {
 		err := op()
-		c.mu.Lock()
-		st.inflight--
-		c.mu.Unlock()
+		<-slots // a timed-out call keeps its slot until it really returns
 		done <- err
 	}()
 	timer := time.NewTimer(timeout)
@@ -159,17 +207,26 @@ func (c *Checker) do(server string, op func() error) error {
 	}
 }
 
+// serverFailed counts a failure; the breaker opens only after
+// FailThreshold failures in a row (a success in between resets the count),
+// so one slow answer does not make every item on the server unreachable.
 func (c *Checker) serverFailed(server, msg string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	st := c.servers[server]
+	st := c.state(server)
 	st.failures++
-	back := c.opt.BackoffMin << (st.failures - 1)
-	if back > c.opt.BackoffMax || back <= 0 {
+	st.lastErr = msg
+	n := st.failures - c.opt.FailThreshold
+	if n < 0 {
+		return
+	}
+	back := c.opt.BackoffMin << n
+	if back > c.opt.BackoffMax || back <= 0 || n > 30 {
 		back = c.opt.BackoffMax
 	}
 	st.openUntil = c.opt.Now().Add(back)
-	st.lastErr = msg
+	close(st.opened)
+	st.opened = make(chan struct{})
 }
 
 func (c *Checker) serverOK(server string) {
@@ -198,7 +255,7 @@ func (c *Checker) Servers() []ServerStatus {
 	now := c.opt.Now()
 	var out []ServerStatus
 	for k, st := range c.servers {
-		out = append(out, ServerStatus{Server: k, Down: now.Before(st.openUntil), RetryAt: st.openUntil, LastError: st.lastErr, Inflight: st.inflight})
+		out = append(out, ServerStatus{Server: k, Down: now.Before(st.openUntil), RetryAt: st.openUntil, LastError: st.lastErr, Inflight: len(st.slots)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Server < out[j].Server })
 	return out
@@ -210,6 +267,7 @@ func (c *Checker) ResetServers() {
 	defer c.mu.Unlock()
 	for _, st := range c.servers {
 		st.openUntil = time.Time{}
+		st.failures = 0
 	}
 	c.lists = map[string]listEntry{}
 }
@@ -219,6 +277,16 @@ func (c *Checker) ResetServers() {
 func (c *Checker) Check(path string, ref time.Time, anyDate bool) Result {
 	start := c.opt.Now()
 	res := c.check(path, ref, anyDate)
+	for _, d := range c.opt.RetryDelays {
+		if !res.retry {
+			break
+		}
+		// Transient network trouble (timeout, dropped SMB session, busy
+		// server): look again shortly instead of reporting it right away.
+		c.opt.Sleep(d)
+		c.dropListing(res.Resolved)
+		res = c.check(path, ref, anyDate)
+	}
 	res.CheckedAt = start
 	res.TookMs = c.opt.Now().Sub(start).Milliseconds()
 	return res
@@ -290,21 +358,47 @@ func (c *Checker) list(server string, r *pathpattern.Resolved) ([]FileInfo, erro
 		c.mu.Unlock()
 		return e.files, e.err
 	}
+	if call := c.listing[key]; call != nil {
+		// Another item lists the same folder right now: share its answer.
+		c.mu.Unlock()
+		<-call.done
+		return call.files, call.err
+	}
+	call := &listCall{done: make(chan struct{})}
+	c.listing[key] = call
 	c.mu.Unlock()
-	var files []FileInfo
-	err := c.do(server, func() error {
+
+	var got []FileInfo // only read after op returned (a timed-out op may still write it)
+	call.err = c.do(server, func() error {
 		var e error
-		files, e = c.fs.ListFiles(r.Dir, r.Join)
+		got, e = c.fs.ListFiles(r.Dir, r.Join)
 		return e
 	})
-	if err != errTimeout && err != errBusy {
-		if _, open := err.(breakerOpenError); !open {
-			c.mu.Lock()
-			c.lists[key] = listEntry{at: c.opt.Now(), files: files, err: err}
-			c.mu.Unlock()
+	if call.err == nil {
+		call.files = got
+	}
+	c.mu.Lock()
+	delete(c.listing, key)
+	if call.err != errTimeout && call.err != errBusy {
+		if _, open := call.err.(breakerOpenError); !open {
+			c.lists[key] = listEntry{at: c.opt.Now(), files: call.files, err: call.err}
 		}
 	}
-	return files, err
+	c.mu.Unlock()
+	close(call.done)
+	return call.files, call.err
+}
+
+// dropListing forgets a cached listing of the folder of resolved (before a
+// retry, so it really asks the server again).
+func (c *Checker) dropListing(resolved string) {
+	i := strings.LastIndexAny(resolved, `\/`)
+	if i <= 0 {
+		return
+	}
+	c.mu.Lock()
+	delete(c.lists, strings.ToLower(resolved[:i]))
+	c.mu.Unlock()
 }
 
 // failure turns an error into a NotFound or Unreachable result.
@@ -316,12 +410,12 @@ func (c *Checker) failure(res Result, server, dir string, err error, listing boo
 		return res
 	}
 	if err == errTimeout {
-		res.Kind, res.ServerProblem = Unreachable, true
+		res.Kind, res.ServerProblem, res.retry = Unreachable, true, true
 		res.Reason = fmt.Sprintf("Időtúllépés: a(z) %s szerver nem válaszolt időben.", server)
 		return res
 	}
 	if err == errBusy {
-		res.Kind, res.ServerProblem = Unreachable, true
+		res.Kind, res.ServerProblem, res.retry = Unreachable, true, true
 		res.Reason = fmt.Sprintf("A(z) %s szerver felé még folyamatban vannak korábbi, lassú kérések.", server)
 		return res
 	}
@@ -354,7 +448,7 @@ func (c *Checker) failure(res Result, server, dir string, err error, listing boo
 			res.Kind, res.Reason = NotFound, "A mappa nem létezik: "+dir
 			return res
 		}
-		res.Kind, res.ServerProblem = Unreachable, true
+		res.Kind, res.ServerProblem, res.retry = Unreachable, true, true
 		_, rmsg := classify(rerr)
 		if rerr == errTimeout {
 			rmsg = "időtúllépés"
@@ -364,9 +458,9 @@ func (c *Checker) failure(res Result, server, dir string, err error, listing boo
 		res.Kind, res.Reason = Unreachable, msg
 	case errServer:
 		c.serverFailed(server, msg)
-		res.Kind, res.ServerProblem, res.Reason = Unreachable, true, msg
+		res.Kind, res.ServerProblem, res.Reason, res.retry = Unreachable, true, msg, true
 	default:
-		res.Kind, res.Reason = Unreachable, "Fájlrendszer hiba: "+msg
+		res.Kind, res.Reason, res.retry = Unreachable, "Fájlrendszer hiba: "+msg, true
 	}
 	return res
 }
