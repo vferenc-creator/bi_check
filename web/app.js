@@ -180,8 +180,10 @@ const S = {
   statusFilter: "",    // status key or ""
   search: "",
   items: [],           // [{item, state}]
-  summary: {},
-  selected: null,
+  snap: null,
+  selected: null,      // item id shown in the drawer
+  sort: { key: "status", dir: 1 },
+  groups: [],
 };
 const views = {};
 
@@ -209,7 +211,7 @@ function renderSidebar() {
   const sb = clear($("#sidebar"));
   const nav = (key, label, ic, count, extra) => h("div", {
     class: "nav" + (extra.active ? " active" : ""), onclick: extra.onclick,
-  }, ic ? icon(ic) : h("span", { class: "sev dot st-" + (extra.sev || "unknown") }), h("span", {}, label), count !== undefined ? h("span", { class: "count" }, count) : null);
+  }, ic ? icon(ic) : h("span", { class: "sev st-" + (extra.sev || "unknown") }), h("span", {}, label), count !== undefined ? h("span", { class: "count" }, count) : null);
 
   const total = S.items.length;
   sb.append(nav("all", "Összes elem", "list", total, {
@@ -256,15 +258,558 @@ function renderSummary() {
   }
 }
 
-// ---- Items view (F1: empty state; filled in by later phases) -------------
+// ---------------------------------------------------------------------------
+// Items view
+// ---------------------------------------------------------------------------
+const RANK = Object.fromEntries(STATUS_ORDER.map((s, i) => [s, i]));
+const DAY_SHORT = ["", "H", "K", "Sze", "Cs", "P", "Szo", "V"];
+
+function visibleItems() {
+  const q = S.search;
+  let rows = S.items.filter(r => {
+    if (S.group && (r.item.group || "Csoport nélkül") !== S.group) return false;
+    if (S.statusFilter && r.state.status !== S.statusFilter) return false;
+    if (q) {
+      const hay = [r.item.name, r.item.path, r.item.owner, r.item.group, r.item.note, r.state.resolved].join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const { key, dir } = S.sort;
+  const val = r => {
+    switch (key) {
+      case "name": return r.item.name.toLowerCase();
+      case "modified": return r.state.file ? new Date(r.state.file.modTime).getTime() : 0;
+      case "next": return parseT(r.state.next) ? new Date(r.state.next).getTime() : Infinity;
+      case "group": return (r.item.group || "").toLowerCase();
+      default: return RANK[r.state.status] ?? 99;
+    }
+  };
+  rows.sort((a, b) => {
+    const va = val(a), vb = val(b);
+    if (va < vb) return -dir;
+    if (va > vb) return dir;
+    return a.item.name.localeCompare(b.item.name, "hu");
+  });
+  return rows;
+}
+
 views.items = main => {
-  main.append(h("div", { class: "page-head" }, h("h1", {}, "Figyelt elemek")));
-  main.append(h("div", { class: "card" }, h("div", { class: "empty" },
-    h("img", { src: window.__ICON, alt: "" }),
-    h("h2", {}, "Még nincs figyelt elem"),
-    h("p", {}, "A BI Output Monitor a háttérben fut és figyeli, hogy a KNIME, DyntellBI és egyéb automatizált folyamatok kimenetei időben megérkeztek-e a hálózati meghajtókra."),
-  )));
+  const rows = visibleItems();
+  const title = S.group || (S.statusFilter ? STATUS[S.statusFilter] + " elemek" : "Figyelt elemek");
+  const last = S.items.map(r => parseT(r.state.lastCheck)).filter(Boolean).sort((a, b) => b - a)[0];
+  main.append(h("div", { class: "page-head" },
+    h("div", {}, h("h1", {}, title),
+      h("div", { class: "sub" }, rows.length + " / " + S.items.length + " elem" + (last ? " · utolsó ellenőrzés: " + fmtDateTime(last, true) : ""))),
+    h("div", { class: "grow" }),
+    S.statusFilter || S.search ? h("button", { class: "btn sm ghost", onclick: () => { S.statusFilter = ""; S.search = ""; $("#search").value = ""; render(); } }, icon("close"), "Szűrés törlése") : null,
+  ));
+  if (S.snap && S.snap.pausedUntil && parseT(S.snap.pausedUntil) > new Date()) {
+    main.append(h("div", { class: "banner" }, icon("bellOff"), h("span", { class: "grow" }, "Az értesítések szünetelnek eddig: " + fmtDateTime(S.snap.pausedUntil)),
+      h("button", { class: "btn sm", onclick: () => api("pauseNotifications", "").then(refresh).catch(fail) }, "Visszakapcsolás")));
+  }
+  const down = (S.snap && S.snap.servers || []).filter(s => s.down);
+  for (const sv of down) {
+    main.append(h("div", { class: "banner", style: { background: "color-mix(in srgb, var(--unreachable) 14%, transparent)" } },
+      h("span", { class: "dot st-unreachable", style: { width: "10px", height: "10px", borderRadius: "50%", background: "var(--unreachable)" } }),
+      h("span", { class: "grow" }, h("b", {}, sv.server), " nem érhető el – " + (sv.lastError || "") + " Újrapróbálás: " + fmtDateTime(sv.retryAt, true))));
+  }
+
+  if (!S.items.length) {
+    main.append(h("div", { class: "card" }, h("div", { class: "empty" },
+      h("img", { src: window.__ICON, alt: "" }),
+      h("h2", {}, "Még nincs figyelt elem"),
+      h("p", {}, "Vegye fel az első outputot: egy konkrét fájlt (pl. \\\\EFS-FSRHQ\\Groups\\BI\\export.xlsx) vagy egy mintát (pl. sales_*.parquet, riport_{yyyyMMdd}.xlsx), és adja meg, mikor kell megérkeznie."),
+      h("div", { class: "row", style: { justifyContent: "center" } },
+        h("button", { class: "btn primary", onclick: () => openEditor() }, icon("plus"), "Új figyelt elem"),
+        typeof importItems === "function" ? h("button", { class: "btn", onclick: importItems }, icon("upload"), "Importálás") : null),
+    )));
+    return;
+  }
+  if (!rows.length) {
+    main.append(h("div", { class: "card" }, h("div", { class: "empty" }, h("h2", {}, "Nincs találat"), h("p", {}, "A szűrésnek egy elem sem felel meg."))));
+    return;
+  }
+
+  const th = (key, label, cls) => h("th", {
+    class: cls || "", onclick: key ? () => { S.sort = { key, dir: S.sort.key === key ? -S.sort.dir : 1 }; render(); } : null,
+  }, label, key && S.sort.key === key ? h("span", { class: "arrow" }, S.sort.dir > 0 ? " ▲" : " ▼") : null);
+
+  const tbody = h("tbody");
+  for (const r of rows) tbody.append(itemRow(r));
+  main.append(h("table", { class: "table" },
+    h("colgroup", {}, ["c-status", "c-name", "c-path", "c-sched", "c-when", "c-when", "c-acts"].map(c => h("col", { class: c }))),
+    h("thead", {}, h("tr", {}, th("status", "Állapot"), th("name", "Név"), th(null, "Útvonal", "nosort"), th(null, "Ütemezés", "nosort"),
+      th("modified", "Utolsó módosítás"), th("next", "Következő elvárt"), th(null, "", "nosort"))),
+    tbody));
 };
+
+function itemRow(r) {
+  const it = r.item, st = r.state;
+  const tr = h("tr", {
+    class: (S.selected === it.id ? "sel" : "") + (!it.enabled ? " off" : ""),
+    onclick: () => openDrawer(it.id),
+    ondblclick: () => { if (!it.source) openEditor(it); },
+  },
+    h("td", {}, st.checking ? h("span", { class: "pill st-unknown" }, icon("refresh", "spin"), "Ellenőrzés…") : pill(st.status), st.acked ? h("span", { class: "group-tag", title: "Nyugtázva" }, "nyugtázva") : null),
+    h("td", {}, h("span", { class: "name" }, it.name), it.group ? h("span", { class: "group-tag" }, it.group) : null,
+      it.source ? h("span", { class: "shared-tag", title: "Közös listából: " + it.source }, "közös") : null,
+      !it.notify ? icon("bellOff", "mute-ic") : null,
+      it.owner ? h("div", { class: "small muted" }, it.owner) : null),
+    h("td", {}, h("div", { class: "path", title: st.file ? st.file.path : it.path }, "‎" + (st.file ? st.file.path : (st.resolved || it.path)))),
+    h("td", { class: "small" }, st.scheduleText || ""),
+    h("td", { class: "when", title: st.file ? fmtFull(st.file.modTime) : "" }, st.file ? fmtDateTime(st.file.modTime) : h("span", { class: "muted" }, "–"),
+      st.file ? h("div", { class: "small muted" }, fmtSize(st.file.size)) : null),
+    h("td", { class: "when" }, parseT(st.next) ? fmtDateTime(st.next) : "–"),
+    h("td", { class: "acts" },
+      h("button", { class: "btn sm icon ghost", title: "Ellenőrzés most", onclick: e => { e.stopPropagation(); checkNow(it.id); } }, icon("refresh")),
+      h("button", { class: "btn sm icon ghost", title: "Mappa megnyitása", onclick: e => { e.stopPropagation(); openPath(it.id, "folder"); } }, icon("folder")),
+      h("button", { class: "btn sm icon ghost", title: "Továbbiak", onclick: e => { e.stopPropagation(); itemMenu(e.currentTarget, r); } }, icon("dots"))),
+  );
+  return tr;
+}
+
+function closeMenus() { $$(".menu").forEach(m => m.remove()); }
+document.addEventListener("click", closeMenus);
+function showMenu(anchor, entries) {
+  closeMenus();
+  const m = h("div", { class: "menu", onclick: e => e.stopPropagation() });
+  for (const e of entries) {
+    if (!e) { m.append(h("hr")); continue; }
+    m.append(h("button", { class: e.danger ? "danger" : "", onclick: () => { closeMenus(); e.run(); } }, e.icon ? icon(e.icon) : null, e.label));
+  }
+  document.body.append(m);
+  const r = anchor.getBoundingClientRect();
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(window.innerWidth - mw - 8, r.right - mw)) + "px";
+  m.style.top = (r.bottom + mh + 8 > window.innerHeight ? r.top - mh - 4 : r.bottom + 4) + "px";
+}
+
+function itemMenu(anchor, r) {
+  const it = r.item;
+  const shared = !!it.source;
+  showMenu(anchor, [
+    !shared && { label: "Szerkesztés", icon: "edit", run: () => openEditor(it) },
+    { label: "Duplikálás", icon: "copy", run: () => duplicateItem(it.id) },
+    !shared && { label: it.enabled ? "Kikapcsolás" : "Bekapcsolás", icon: "power", run: () => setEnabled(it.id, !it.enabled) },
+    typeof ackItem === "function" && r.state.status && ["missing", "unreachable", "suspicious", "late"].includes(r.state.status) && !r.state.acked
+      ? { label: "Nyugtázás (ne szóljon újra)", icon: "ack", run: () => ackItem(it.id, true) } : null,
+    null,
+    { label: "Fájl megnyitása", icon: "open", run: () => openPath(it.id, "file") },
+    { label: "Mappa megnyitása", icon: "folder", run: () => openPath(it.id, "folder") },
+    !shared && null,
+    !shared && { label: "Törlés", icon: "trash", danger: true, run: () => deleteItem(it) },
+  ].filter(x => x !== false));
+}
+
+async function refresh() {
+  try { applySnapshot(await api("listItems")); } catch (e) { fail(e); }
+}
+function applySnapshot(snap) {
+  S.snap = snap;
+  S.items = snap.items || [];
+  const scroll = $("#main").scrollTop;
+  if (!$(".overlay")) {
+    render();
+    $("#main").scrollTop = scroll;
+  } else {
+    renderSidebar(); renderSummary();
+  }
+  if (S.selected) renderDrawer();
+}
+bridge.on("state", applySnapshot);
+bridge.on("settings", s => { S.settings = s; });
+
+async function checkNow(id) {
+  try {
+    if (!id) { $("#btnCheckAll").classList.add("spin"); $("#btnCheckAll").disabled = true; }
+    applySnapshot(await api("checkNow", id || ""));
+    if (!id) toast("Ellenőrzés kész.");
+  } catch (e) { fail(e); } finally {
+    $("#btnCheckAll").classList.remove("spin"); $("#btnCheckAll").disabled = false;
+  }
+}
+async function openPath(id, target) { try { await api("openPath", { id, target }); } catch (e) { fail(e); } }
+async function duplicateItem(id) {
+  try { const v = await api("duplicateItem", { id }); await refresh(); openEditor(v.item); } catch (e) { fail(e); }
+}
+async function setEnabled(id, enabled) {
+  try { await api("setEnabled", { id, enabled }); await refresh(); toast(enabled ? "Elem bekapcsolva." : "Elem kikapcsolva."); } catch (e) { fail(e); }
+}
+async function deleteItem(it) {
+  if (!(await confirmBox("Elem törlése", "Biztosan törli ezt az elemet?\n\n" + it.name, "Törlés", true))) return;
+  try {
+    await api("deleteItem", { id: it.id });
+    if (S.selected === it.id) closeDrawer();
+    await refresh();
+    toast("Elem törölve.");
+  } catch (e) { fail(e); }
+}
+
+function confirmBox(title, text, okLabel, danger) {
+  return new Promise(resolve => {
+    const close = v => { ov.remove(); resolve(v); };
+    const ov = h("div", { class: "overlay", onclick: e => { if (e.target === ov) close(false); } },
+      h("div", { class: "modal small" },
+        h("div", { class: "m-head" }, h("h2", {}, title)),
+        h("div", { class: "m-body", style: { whiteSpace: "pre-line" } }, text),
+        h("div", { class: "m-foot" },
+          h("button", { class: "btn", onclick: () => close(false) }, "Mégse"),
+          h("button", { class: "btn " + (danger ? "danger solid" : "primary"), onclick: () => close(true) }, okLabel || "OK"))));
+    document.body.append(ov);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Detail drawer
+// ---------------------------------------------------------------------------
+function openDrawer(id) { S.selected = id; renderDrawer(); $$("#main tr").forEach(tr => tr.classList.remove("sel")); render(); }
+function closeDrawer() { S.selected = null; $("#drawer").classList.remove("open"); render(); }
+
+function renderDrawer() {
+  const d = $("#drawer");
+  const r = S.items.find(x => x.item.id === S.selected);
+  if (!r) { d.classList.remove("open"); return; }
+  const it = r.item, st = r.state;
+  const keep = d.querySelector(".d-body") ? d.querySelector(".d-body").scrollTop : 0;
+  clear(d);
+  const shared = !!it.source;
+  d.append(h("div", { class: "d-head" },
+    h("div", { class: "row" }, pill(st.status), h("div", { class: "grow" }),
+      h("button", { class: "btn sm icon ghost", title: "Bezárás (Esc)", onclick: closeDrawer }, icon("close"))),
+    h("h2", { style: { marginTop: "10px" } }, it.name),
+    h("div", { class: "small muted" }, [it.group, it.owner].filter(Boolean).join(" · ") || " "),
+    h("div", { class: "d-actions" },
+      h("button", { class: "btn sm primary", onclick: () => checkNow(it.id) }, icon("refresh"), "Ellenőrzés most"),
+      !shared ? h("button", { class: "btn sm", onclick: () => openEditor(it) }, icon("edit"), "Szerkesztés") : null,
+      h("button", { class: "btn sm", onclick: () => openPath(it.id, "file"), disabled: !st.file }, icon("open"), "Fájl"),
+      h("button", { class: "btn sm", onclick: () => openPath(it.id, "folder") }, icon("folder"), "Mappa"),
+      h("button", { class: "btn sm icon", title: "Továbbiak", onclick: e => { e.stopPropagation(); itemMenu(e.currentTarget, r); } }, icon("dots")),
+    )));
+  const body = h("div", { class: "d-body" });
+  d.append(body);
+  body.append(h("div", { class: "reason st-" + st.status }, st.reason || "Még nem volt ellenőrzés."));
+  const kv = h("dl", { class: "kv" });
+  const add = (k, v, cls) => { if (v === null || v === undefined || v === "") return; kv.append(h("dt", {}, k), h("dd", { class: cls || "" }, v)); };
+  add("Figyelt útvonal", it.path, "mono selectable");
+  if (st.resolved && st.resolved !== it.path) add("Vizsgált", st.resolved, "mono selectable");
+  if (st.file) add("Talált fájl", st.file.path, "mono selectable");
+  add("Ütemezés", st.scheduleText);
+  if (st.scheduleError) add("Ütemezési hiba", st.scheduleError);
+  add("Elvárt időpont", parseT(st.expected) ? fmtDateTime(st.expected) : null);
+  add("Határidő", parseT(st.deadline) ? fmtDateTime(st.deadline) + " (türelmi idő: " + it.graceMinutes + " perc)" : null);
+  add("Következő elvárt", parseT(st.next) ? fmtDateTime(st.next) : null);
+  if (st.file) {
+    add("Utolsó módosítás", fmtFull(st.file.modTime) + " (" + relTime(st.file.modTime) + ")");
+    add("Méret", fmtSize(st.file.size) + " (" + st.file.size.toLocaleString("hu-HU") + " bájt)");
+  }
+  if (st.matches > 1) add("Illeszkedő fájlok", st.matches + " db");
+  add("Utolsó ellenőrzés", parseT(st.lastCheck) ? fmtDateTime(st.lastCheck, true) + " · " + st.tookMs + " ms" : "még nem volt");
+  add("Állapot óta", parseT(st.since) ? fmtDateTime(st.since) : null);
+  add("Értesítés", it.notify ? "bekapcsolva" : "kikapcsolva");
+  if (it.source) add("Forrás", "Közös lista: " + it.source);
+  add("Megjegyzés", it.note);
+  body.append(kv);
+  if (st.candidates && st.candidates.length > 1) {
+    body.append(h("div", { class: "section-t" }, "Legfrissebb illeszkedő fájlok"));
+    const ev = h("div", { class: "events" });
+    for (const c of st.candidates) ev.append(h("div", { class: "event" }, h("span", { class: "t" }, fmtDateTime(c.modTime)), h("span", { class: "mono grow selectable" }, c.name), h("span", { class: "muted" }, fmtSize(c.size))));
+    body.append(ev);
+  }
+  if (typeof renderHistory === "function") renderHistory(body, it, st);
+  d.classList.add("open");
+  body.scrollTop = keep;
+}
+
+// ---------------------------------------------------------------------------
+// Editor
+// ---------------------------------------------------------------------------
+const SCHED_TYPES = [
+  ["hourly", "Óránként"], ["daily", "Naponta"], ["weekly", "Hetente"],
+  ["workdays", "Munkanapokon"], ["monthly", "Havonta"], ["cron", "Cron"],
+];
+
+async function openEditor(item) {
+  let it;
+  if (item) it = JSON.parse(JSON.stringify(item));
+  else {
+    try { it = await api("newItem"); } catch (e) { return fail(e); }
+    if (S.group && S.group !== "Csoport nélkül") it.group = S.group;
+  }
+  if (!S.groups.length) { try { S.groups = await api("groups"); } catch (_) { /* ignore */ } }
+  const isNew = !it.id;
+  const sp = it.schedule;
+  let suggestions = [];
+  let testOut = null;
+
+  const ov = h("div", { class: "overlay" });
+  const modal = h("div", { class: "modal" });
+  ov.append(modal);
+  document.body.append(ov);
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); render(); };
+  const onKey = e => { if (e.key === "Escape") close(); if (e.key === "Enter" && e.ctrlKey) save(); };
+  document.addEventListener("keydown", onKey);
+
+  const preview = h("div");
+  const testBox = h("div");
+  const pathHelp = h("div");
+  const schedBox = h("div");
+  const errBox = h("div");
+
+  const field = (label, ctrl, hint) => h("label", { class: "field" }, label, ctrl, hint ? h("span", { class: "hint" }, hint) : null);
+  const text = (obj, key, attrs) => h("input", Object.assign({ class: "input", value: obj[key] || "", oninput: e => { obj[key] = e.target.value; onChange(key); } }, attrs || {}));
+  const number = (obj, key, attrs) => h("input", Object.assign({ class: "input narrow", type: "number", value: obj[key] ?? 0, oninput: e => { obj[key] = parseInt(e.target.value, 10) || 0; onChange(key); } }, attrs || {}));
+  const sw = (obj, key, label) => h("label", { class: "switch" }, h("input", { type: "checkbox", checked: !!obj[key], onchange: e => { obj[key] = e.target.checked; onChange(key); } }), label);
+
+  let pvTimer = null;
+  function onChange(key) {
+    if (key === "path") renderPathHelp();
+    clearTimeout(pvTimer);
+    pvTimer = setTimeout(updatePreview, 250);
+  }
+
+  const pathInput = text(it, "path", { class: "input mono grow", placeholder: "\\\\EFS-FSRHQ\\Groups\\BI\\export.xlsx", spellcheck: false });
+  pathInput.addEventListener("blur", async () => {
+    if (/^[a-zA-Z]:[\\/]/.test(it.path)) {
+      try {
+        const r = await api("toUNC", it.path);
+        if (r.converted) { it.path = r.path; pathInput.value = r.path; toast("Csatolt meghajtó → UNC: " + r.path); }
+        suggestions = r.suggestions || [];
+        renderPathHelp();
+      } catch (_) { /* ignore */ }
+    }
+  });
+
+  async function browse() {
+    try {
+      const r = await api("browseFile", it.path);
+      if (!r.path) return;
+      it.path = r.path;
+      pathInput.value = r.path;
+      suggestions = r.suggestions || [];
+      if (!it.name) {
+        const base = r.path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+        it.name = base; $("#ed-name").value = base;
+      }
+      if (r.converted) toast("A csatolt meghajtós útvonalat UNC-re alakítottam.");
+      if (r.local) toast("Figyelem: helyi meghajtós útvonal – más gépen nem biztos, hogy elérhető.", true);
+      onChange("path");
+    } catch (e) { fail(e); }
+  }
+
+  function renderPathHelp() {
+    clear(pathHelp);
+    const hasTok = /\{[^}]+\}/.test(it.path || "");
+    if (suggestions.length) {
+      pathHelp.append(h("div", { class: "suggest" }, "A fájlnév dátumot tartalmaz. Mintaként figyelje? ",
+        suggestions.map(sg => h("button", { class: "btn sm", style: { margin: "4px 4px 0 0" }, onclick: () => { it.path = sg; pathInput.value = sg; suggestions = []; onChange("path"); } }, h("code", {}, sg.split(/[\\/]/).pop())))));
+    }
+    if (hasTok) {
+      pathHelp.append(h("div", { class: "row wrap", style: { marginTop: "8px" } },
+        h("span", { class: "small muted" }, "Dátum token:"),
+        h("div", { class: "seg" },
+          h("button", { class: it.tokenMode !== "any" ? "on" : "", onclick: () => { it.tokenMode = ""; renderPathHelp(); onChange(); } }, "az elvárt nap dátuma"),
+          h("button", { class: it.tokenMode === "any" ? "on" : "", onclick: () => { it.tokenMode = "any"; renderPathHelp(); onChange(); } }, "bármilyen dátum (legfrissebb)"))));
+    }
+    pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
+      "Minta: ", h("code", {}, "*"), " és ", h("code", {}, "?"), " a fájlnévben; dátum: ", h("code", {}, "{yyyyMMdd}"), ", ", h("code", {}, "{yyyy-MM-dd}"),
+      ", eltolással ", h("code", {}, "{yyyyMMdd:-1d}"), ". Mintánál a legfrissebb illeszkedő fájl számít."));
+  }
+
+  function timesEditor() {
+    if (!sp.times) sp.times = [];
+    const box = h("div", { class: "row wrap" });
+    const draw = () => {
+      clear(box);
+      for (const t of sp.times) box.append(h("span", { class: "tag" }, t, h("button", { title: "Eltávolítás", onclick: () => { sp.times = sp.times.filter(x => x !== t); draw(); onChange(); } }, "×")));
+      const inp = h("input", { class: "input narrow", type: "time", value: "" });
+      const addT = () => { const v = inp.value; if (v && !sp.times.includes(v)) { sp.times.push(v); sp.times.sort(); draw(); onChange(); } };
+      inp.addEventListener("change", addT);
+      box.append(inp, h("button", { class: "btn sm", onclick: addT }, icon("plus"), "Időpont"));
+    };
+    draw();
+    return field("Időpont(ok)", box);
+  }
+  function dayPicker() {
+    if (!sp.weekdays) sp.weekdays = [];
+    const box = h("div", { class: "daypick" });
+    const draw = () => {
+      clear(box);
+      for (let d = 1; d <= 7; d++) {
+        box.append(h("button", { class: sp.weekdays.includes(d) ? "on" : "", onclick: () => {
+          sp.weekdays = sp.weekdays.includes(d) ? sp.weekdays.filter(x => x !== d) : [...sp.weekdays, d].sort();
+          draw(); onChange();
+        } }, DAY_SHORT[d]));
+      }
+    };
+    draw();
+    return box;
+  }
+  function holidayRule() {
+    return field("Munkaszüneti napon", h("select", { class: "input", onchange: e => { sp.holidayRule = e.target.value; onChange(); } },
+      [["", "nem számít (ugyanúgy elvárt)"], ["skip", "nincs elvárás"], ["next", "a következő munkanapra tolódik"], ["prev", "az előző munkanapra kerül"]]
+        .map(([v, l]) => h("option", { value: v, selected: (sp.holidayRule || "") === v }, l))));
+  }
+
+  function renderSchedule() {
+    clear(schedBox);
+    schedBox.append(h("div", { class: "seg", style: { marginBottom: "12px" } },
+      SCHED_TYPES.map(([v, l]) => h("button", { class: sp.type === v ? "on" : "", onclick: () => {
+        sp.type = v;
+        if (["daily", "weekly", "workdays", "monthly"].includes(v) && (!sp.times || !sp.times.length)) sp.times = ["06:00"];
+        if (v === "weekly" && (!sp.weekdays || !sp.weekdays.length)) sp.weekdays = [1];
+        if (v === "workdays" && sp.useHolidays === undefined) sp.useHolidays = true;
+        if (v === "monthly" && !sp.monthlyMode) { sp.monthlyMode = "day"; sp.monthDay = sp.monthDay || 1; }
+        if (v === "cron" && !sp.cron) sp.cron = "0 6 * * 1-5";
+        renderSchedule(); onChange();
+      } }, l))));
+    const g = h("div", { class: "grid2" });
+    schedBox.append(g);
+    switch (sp.type) {
+      case "hourly": {
+        if (!sp.intervalMinutes) sp.intervalMinutes = 60;
+        g.append(field("Gyakoriság", h("select", { class: "input", onchange: e => { sp.intervalMinutes = parseInt(e.target.value, 10); onChange(); } },
+          [[15, "15 percenként"], [30, "30 percenként"], [60, "óránként"], [120, "2 óránként"], [180, "3 óránként"], [240, "4 óránként"], [360, "6 óránként"], [720, "12 óránként"]]
+            .map(([v, l]) => h("option", { value: v, selected: sp.intervalMinutes === v }, l)))));
+        g.append(field("Napok", h("select", { class: "input", onchange: e => { sp.days = e.target.value; renderSchedule(); onChange(); } },
+          [["", "minden nap"], ["weekdays", "hétköznap (H–P)"], ["workdays", "munkanapokon (ünnepekkel)"], ["custom", "kiválasztott napokon"]]
+            .map(([v, l]) => h("option", { value: v, selected: (sp.days || "") === v }, l)))));
+        g.append(field("Első időpont (kezdés)", h("input", { class: "input", type: "time", value: sp.from || "00:00", oninput: e => { sp.from = e.target.value; onChange(); } }), "pl. 06:00, vagy 00:15 = minden óra 15. percében"));
+        g.append(field("Utolsó időpont (vége)", h("input", { class: "input", type: "time", value: sp.to || "23:59", oninput: e => { sp.to = e.target.value; onChange(); } }), "ha korábbi a kezdésnél, átnyúlik éjfélen"));
+        if (sp.days === "custom") schedBox.append(h("div", { style: { marginTop: "12px" } }, field("Kiválasztott napok", dayPicker())));
+        break;
+      }
+      case "daily":
+        g.append(timesEditor(), holidayRule());
+        break;
+      case "weekly":
+        g.append(field("Napok", dayPicker()), holidayRule(), timesEditor());
+        break;
+      case "workdays":
+        g.append(timesEditor(), h("div", { class: "col", style: { justifyContent: "center" } },
+          sw(sp, "useHolidays", "Magyar munkaszüneti napok és áthelyezett munkanapok figyelembevétele")));
+        break;
+      case "monthly": {
+        const needDay = sp.monthlyMode === "day" || sp.monthlyMode === "nthWorkday" || !sp.monthlyMode;
+        g.append(field("Melyik nap", h("select", { class: "input", onchange: e => { sp.monthlyMode = e.target.value; if (!sp.monthDay) sp.monthDay = 1; renderSchedule(); onChange(); } },
+          [["day", "a hónap N. napja"], ["firstWorkday", "első munkanap"], ["nthWorkday", "N. munkanap"], ["lastWorkday", "utolsó munkanap"], ["lastDay", "a hónap utolsó napja"]]
+            .map(([v, l]) => h("option", { value: v, selected: (sp.monthlyMode || "day") === v }, l)))));
+        if (needDay) g.append(field("N =", number(sp, "monthDay", { min: 1, max: 31 }), sp.monthlyMode === "day" ? "rövidebb hónapban az utolsó nap" : null));
+        g.append(timesEditor());
+        if (sp.monthlyMode === "day" || sp.monthlyMode === "lastDay" || !sp.monthlyMode) g.append(holidayRule());
+        break;
+      }
+      case "cron":
+        g.append(field("Cron kifejezés", h("input", { class: "input mono", value: sp.cron || "", oninput: e => { sp.cron = e.target.value; onChange(); }, spellcheck: false }),
+          "perc óra nap hónap hét_napja – pl. 0 6 * * 1-5 (hétköznap 6:00), */15 8-17 * * * , 30 7 1 * *"), holidayRule());
+        break;
+    }
+  }
+
+  async function updatePreview() {
+    try {
+      const pv = await api("previewSchedule", { schedule: sp, count: 8 });
+      clear(preview);
+      preview.append(h("div", { class: "section-t", style: { marginTop: 0 } }, "Ütemezés előnézet"));
+      if (pv.error) { preview.append(h("div", { class: "errbox" }, pv.error)); return; }
+      preview.append(h("div", { style: { fontWeight: 600, marginBottom: "8px" } }, pv.text));
+      if (pv.prev) preview.append(h("div", { class: "small muted", style: { marginBottom: "6px" } }, "Legutóbbi elvárt: " + fmtDateTime(pv.prev)));
+      const ul = h("ul", { class: "preview-list" });
+      const wd = ["V", "H", "K", "Sze", "Cs", "P", "Szo"];
+      for (const t of pv.next) { const d = new Date(t); ul.append(h("li", {}, h("span", {}, fmtDateTime(t)), h("span", { class: "muted" }, wd[d.getDay()]))); }
+      preview.append(ul);
+    } catch (e) { /* ignore while typing */ }
+  }
+
+  async function runTest() {
+    clear(testBox);
+    testBox.append(h("div", { class: "small muted" }, "Ellenőrzés folyamatban…"));
+    try {
+      const r = await api("testPath", it);
+      clear(testBox);
+      if (r.error) { testBox.append(h("div", { class: "errbox" }, r.error)); return; }
+      testOut = r;
+      const res = r.result || {};
+      testBox.append(h("div", { class: "row", style: { marginBottom: "6px" } }, pill(r.status)));
+      testBox.append(h("div", { class: "reason st-" + r.status, style: { margin: "6px 0", fontSize: "12.5px" } }, r.reason));
+      if (res.file) testBox.append(h("div", { class: "small" }, h("b", {}, "Talált: "), h("span", { class: "mono selectable" }, res.file.name), " · ", fmtFull(res.file.modTime), " · ", fmtSize(res.file.size)));
+      if (res.matches > 1) testBox.append(h("div", { class: "small muted" }, res.matches + " illeszkedő fájl, a legfrissebb számít."));
+      if (res.resolved && res.resolved !== it.path) testBox.append(h("div", { class: "small muted mono", style: { marginTop: "4px", wordBreak: "break-all" } }, "Vizsgált: " + res.resolved));
+      for (const w of r.warnings || []) testBox.append(h("div", { class: "small", style: { marginTop: "6px", color: "var(--late)" } }, w));
+      if (r.normPath && r.normPath !== it.path) { it.path = r.normPath; pathInput.value = r.normPath; }
+    } catch (e) { clear(testBox); testBox.append(h("div", { class: "errbox" }, e.message)); }
+  }
+
+  async function save() {
+    clear(errBox);
+    try {
+      const r = await api("saveItem", it);
+      close();
+      await refresh();
+      toast(isNew ? "Új elem felvéve: " + r.view.item.name : "Mentve: " + r.view.item.name);
+      for (const w of r.warnings || []) toast(w);
+      openDrawer(r.view.item.id);
+    } catch (e) {
+      errBox.append(h("div", { class: "errbox" }, e.message));
+    }
+  }
+
+  if (!it.suspicious) it.suspicious = { zeroBytes: true };
+  const sus = it.suspicious;
+  const minKB = { v: sus.minBytes ? Math.round(sus.minBytes / 1024) : 0 };
+
+  modal.append(
+    h("div", { class: "m-head" }, h("h2", {}, isNew ? "Új figyelt elem" : "Elem szerkesztése"), h("div", { class: "grow" }),
+      h("button", { class: "btn sm icon ghost", onclick: close, title: "Bezárás (Esc)" }, icon("close"))),
+    h("div", { class: "m-body" }, h("div", { class: "editor" },
+      h("div", {},
+        h("fieldset", {}, h("legend", {}, "Alapadatok"),
+          h("div", { class: "grid2" },
+            field("Név *", text(it, "name", { id: "ed-name", placeholder: "pl. Napi értékesítési export" })),
+            field("Csoport", text(it, "group", { list: "ed-groups", placeholder: "pl. KNIME" })),
+            field("Felelős", text(it, "owner", { placeholder: "név vagy e-mail" })),
+            field("Megjegyzés", text(it, "note", { placeholder: "pl. KNIME workflow neve, teendő hiba esetén" }))),
+          h("datalist", { id: "ed-groups" }, S.groups.map(g => h("option", { value: g })))),
+        h("fieldset", {}, h("legend", {}, "Útvonal"),
+          h("div", { class: "row" }, pathInput, h("button", { class: "btn", onclick: browse }, icon("folder"), "Tallózás…")),
+          pathHelp),
+        h("fieldset", {}, h("legend", {}, "Ütemezés"), schedBox),
+        h("fieldset", {}, h("legend", {}, "Tolerancia"),
+          h("div", { class: "grid2" },
+            field("Türelmi idő (perc)", number(it, "graceMinutes", { min: 0 }), "ennyi ideig „Késik”, utána „Hiányzik”"),
+            field("Korai érkezés elfogadása (perc)", number(it, "earlyMinutes", { min: 0 }), "az elvárt időpont előtt ennyivel érkező fájl is jó"))),
+        h("fieldset", {}, h("legend", {}, "Gyanús fájl"),
+          h("div", { class: "grid3" },
+            h("div", { class: "col", style: { justifyContent: "center" } }, sw(sus, "zeroBytes", "0 bájtos fájl gyanús")),
+            field("Minimális méret (KB)", h("input", { class: "input narrow", type: "number", min: 0, value: minKB.v, oninput: e => { sus.minBytes = (parseInt(e.target.value, 10) || 0) * 1024; } })),
+            field("Méretcsökkenés küszöb (%)", number(sus, "dropPercent", { min: 0, max: 99 }), "a szokásos mérethez képest; 0 = ki"))),
+        h("fieldset", {}, h("legend", {}, "Működés"),
+          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", "Értesítés erről az elemről"))),
+        errBox,
+      ),
+      h("div", { class: "side" }, preview,
+        h("div", { class: "section-t" }, "Útvonal teszt"),
+        h("div", { class: "small muted", style: { marginBottom: "8px" } }, "Megnézi a fájlt most, és megmutatja, milyen állapot lenne."),
+        h("button", { class: "btn sm", onclick: runTest }, icon("test"), "Útvonal tesztelése"),
+        h("div", { style: { marginTop: "10px" } }, testBox)),
+    )),
+    h("div", { class: "m-foot" },
+      h("span", { class: "small muted grow" }, "Ctrl+Enter: mentés · Esc: mégse"),
+      h("button", { class: "btn", onclick: close }, "Mégse"),
+      h("button", { class: "btn primary", onclick: save }, icon("check"), isNew ? "Felvétel" : "Mentés")));
+
+  renderPathHelp();
+  renderSchedule();
+  updatePreview();
+  setTimeout(() => (isNew ? pathInput : $("#ed-name")).focus(), 50);
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$(".overlay")) { closeMenus(); if (S.selected) closeDrawer(); }
+  if (e.key === "F5") { e.preventDefault(); checkNow(); }
+  if ((e.key === "n" || e.key === "N") && e.ctrlKey && !$(".overlay")) { e.preventDefault(); openEditor(); }
+  if (e.key === "f" && e.ctrlKey) { e.preventDefault(); $("#search").focus(); }
+});
 
 // ---- Settings view -------------------------------------------------------
 views.settings = main => {
@@ -335,14 +880,15 @@ views.about = main => {
 async function boot() {
   $("#btnCheckAll").append(icon("refresh"), "Ellenőrzés most");
   $("#btnNew").append(icon("plus"), "Új elem");
+  $("#btnCheckAll").addEventListener("click", () => checkNow());
+  $("#btnNew").addEventListener("click", () => openEditor());
   $("#search").addEventListener("input", e => { S.search = e.target.value.trim().toLowerCase(); if (S.view !== "items") S.view = "items"; render(); });
   try {
     S.boot = await api("bootstrap");
     S.settings = S.boot.settings;
     applyTheme();
     if (S.boot.warning) toast(S.boot.warning, true);
-    if (typeof bootExtra === "function") await bootExtra();
-    render();
+    applySnapshot(await api("listItems"));
   } catch (e) { fail(e); }
 }
 document.addEventListener("DOMContentLoaded", boot);

@@ -8,6 +8,7 @@
 //	BIMonitor.exe --minimized   start in the tray only (used by autostart)
 //	BIMonitor.exe --debug       enable WebView2 dev tools
 //	BIMonitor.exe --data-dir X  use X instead of %APPDATA% / %LOCALAPPDATA%
+//	BIMonitor.exe --selftest F  open the UI, write "ok" to F once it talks to Go, exit
 package main
 
 import (
@@ -16,6 +17,8 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"sync"
+	"time"
 
 	"golang.org/x/sys/windows"
 
@@ -36,6 +39,7 @@ func main() {
 	minimized := flag.Bool("minimized", false, "indítás csak a tálcán")
 	debug := flag.Bool("debug", false, "fejlesztői eszközök engedélyezése")
 	dataDir := flag.String("data-dir", "", "adatkönyvtár felülbírálása")
+	selftest := flag.String("selftest", "", "automata teszt: megnyitja a felületet, az eredményt a megadott fájlba írja és kilép")
 	flag.Parse()
 	if *dataDir != "" {
 		paths.Override = *dataDir
@@ -74,6 +78,24 @@ func main() {
 		os.Exit(1)
 	}
 	sh.SetApp(a)
+	if *selftest != "" {
+		// The UI calls listItems right after it loaded: that proves the
+		// window, WebView2 and the JS↔Go bridge all work.
+		var once sync.Once
+		a.OnCall = func(method string) {
+			if method == "listItems" {
+				once.Do(func() {
+					_ = os.WriteFile(*selftest, []byte("ok"), 0o644)
+					sh.Do(sh.Shutdown)
+				})
+			}
+		}
+		go func() {
+			time.Sleep(90 * time.Second)
+			_ = os.WriteFile(*selftest, []byte("timeout"), 0o644)
+			os.Exit(2)
+		}()
+	}
 	sh.OnExit = a.Close
 	sh.Init()
 	a.Start()

@@ -230,6 +230,9 @@ func (sh *Shell) onWindowClosed() {
 	go sh.app.Settings.Update(func(s *model.Settings) error { s.CloseHintShown = true; return nil })
 }
 
+// Shutdown exits the application (UI thread only; use Do from elsewhere).
+func (sh *Shell) Shutdown() { sh.shutdown() }
+
 func (sh *Shell) shutdown() {
 	if sh.win != nil {
 		sh.win.destroy()

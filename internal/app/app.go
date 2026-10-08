@@ -4,6 +4,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,6 +14,9 @@ import (
 	"time"
 
 	"bimonitor/branding"
+	"bimonitor/internal/calendar"
+	"bimonitor/internal/checker"
+	"bimonitor/internal/engine"
 	"bimonitor/internal/model"
 	"bimonitor/internal/store"
 )
@@ -26,9 +30,21 @@ type App struct {
 	Settings *store.SettingsStore
 	Loc      *time.Location
 
+	Checker *checker.Checker
+	Engine  *engine.Engine
+
 	mu       sync.Mutex
 	handlers map[string]handler
 	closed   bool
+	cancel   context.CancelFunc
+	cal      *calendar.Calendar
+
+	pushMu      sync.Mutex
+	pushPending bool
+	lastTray    string
+
+	// OnCall, if set, is invoked before every RPC (used by --selftest).
+	OnCall func(method string)
 }
 
 type handler struct {
@@ -54,7 +70,17 @@ func New(p Platform, opt Options) (*App, error) {
 		loc = loadBudapest()
 	}
 	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}}
+	s := st.Get()
+	a.cal = calendar.New(s.Calendar)
+	a.Checker = checker.New(nil, checker.Options{Timeout: time.Duration(s.TimeoutSec) * time.Second})
+	a.Engine = engine.New(engine.Config{
+		Checker:  a.Checker,
+		Loc:      loc,
+		OnEvents: a.onEvents,
+		OnChange: a.schedulePush,
+	})
 	a.registerAll()
+	a.registerItemAPI()
 	return a, nil
 }
 
@@ -68,13 +94,103 @@ func loadBudapest() *time.Location {
 // Start begins background work.
 func (a *App) Start() {
 	a.syncAutostart()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	a.reconfigure()
+	go a.Engine.Run(ctx)
 }
 
 // Close stops background work.
 func (a *App) Close() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.closed {
+		return
+	}
 	a.closed = true
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
+
+// reconfigure pushes the current settings into the engine.
+func (a *App) reconfigure() {
+	s := a.Settings.Get()
+	a.mu.Lock()
+	a.cal = calendar.New(s.Calendar)
+	cal := a.cal
+	a.mu.Unlock()
+	a.Checker.SetTimeout(time.Duration(s.TimeoutSec) * time.Second)
+	a.Engine.Configure(a.effectiveItems(s), cal, time.Duration(s.CheckIntervalSec)*time.Second, s.Parallelism)
+}
+
+// effectiveItems are the personal items (shared lists are merged in later phases).
+func (a *App) effectiveItems(s model.Settings) []model.Item {
+	return s.Items
+}
+
+// Calendar returns the working-day calendar in use.
+func (a *App) Calendar() *calendar.Calendar {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cal
+}
+
+// onEvents receives transitions and arrivals from the engine.
+func (a *App) onEvents(evs []engine.Event) {
+	for _, ev := range evs {
+		if ev.Kind == engine.EvTransition {
+			log.Printf("[%s] %s → %s: %s", ev.Item.Name, ev.Old.Status, ev.New.Status, ev.New.Reason)
+		}
+	}
+}
+
+// schedulePush coalesces state changes into one UI push every 250 ms.
+func (a *App) schedulePush() {
+	a.pushMu.Lock()
+	defer a.pushMu.Unlock()
+	if a.pushPending {
+		return
+	}
+	a.pushPending = true
+	time.AfterFunc(250*time.Millisecond, func() {
+		a.pushMu.Lock()
+		a.pushPending = false
+		a.pushMu.Unlock()
+		a.P.Push("state", a.snapshot())
+		a.updateTray()
+	})
+}
+
+func (a *App) updateTray() {
+	counts, worst := a.Engine.Summary()
+	name := branding.Current.AppName
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	var tip string
+	errs := counts[model.StatusMissing] + counts[model.StatusUnreachable]
+	warns := counts[model.StatusLate] + counts[model.StatusSuspicious]
+	switch {
+	case total == 0:
+		tip = name + " – nincs figyelt elem"
+	case errs == 0 && warns == 0:
+		tip = fmt.Sprintf("%s – minden rendben (%d elem)", name, total)
+	default:
+		tip = fmt.Sprintf("%s – %d hiba, %d figyelmeztetés", name, errs, warns)
+	}
+	if paused := a.Settings.Get().Notifications.PausedUntil; paused.After(time.Now()) {
+		tip += " · értesítések szünetelnek"
+	}
+	key := fmt.Sprintf("%d|%s", worst, tip)
+	a.pushMu.Lock()
+	changed := key != a.lastTray
+	a.lastTray = key
+	a.pushMu.Unlock()
+	if changed {
+		a.P.UpdateTray(worst, tip)
+	}
 }
 
 // syncAutostart makes the registry match the setting (also fixes the path
@@ -112,6 +228,9 @@ func (a *App) Methods() []string {
 
 // Call invokes an RPC method with JSON params.
 func (a *App) Call(method string, params json.RawMessage) (result any, err error) {
+	if a.OnCall != nil {
+		a.OnCall(method)
+	}
 	h, ok := a.handlers[method]
 	if !ok {
 		return nil, fmt.Errorf("ismeretlen művelet: %s", method)
@@ -214,6 +333,7 @@ func (a *App) registerAll() {
 		if err != nil {
 			return redact(s), err
 		}
+		a.reconfigure()
 		if err := a.P.SetAutostart(s.Autostart); err != nil {
 			return redact(s), fmt.Errorf("az automatikus indítás beállítása nem sikerült: %w", err)
 		}
@@ -225,6 +345,19 @@ func (a *App) registerAll() {
 			return err
 		}
 		return a.P.SetAutostart(on)
+	})
+
+	a.register("pauseNotifications", func(until string) error {
+		var t time.Time
+		if until != "" {
+			var err error
+			if t, err = time.Parse(time.RFC3339, until); err != nil {
+				return fmt.Errorf("érvénytelen időpont: %w", err)
+			}
+		}
+		a.PauseNotifications(t)
+		a.updateTray()
+		return nil
 	})
 
 	a.register("openDataFolder", func() error {

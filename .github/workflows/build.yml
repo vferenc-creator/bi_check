@@ -34,6 +34,16 @@ jobs:
           $v = "0.0.0-ci.${{ github.run_number }}"
           if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}" }
           ./build.ps1 -Version $v
+      - name: GUI smoke test (tray + WebView2 window + JS bridge)
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP "bimon"
+          $out = Join-Path $env:RUNNER_TEMP "selftest.txt"
+          $p = Start-Process dist/BIMonitor.exe -ArgumentList "--data-dir", $d, "--selftest", $out -PassThru -Wait
+          $r = if (Test-Path $out) { Get-Content $out } else { "no output" }
+          Write-Host "exit=$($p.ExitCode) result=$r"
+          if (Test-Path "$d/local/logs/monitor.log") { Get-Content "$d/local/logs/monitor.log" }
+          if ($r -ne "ok") { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: BIMonitor-exe

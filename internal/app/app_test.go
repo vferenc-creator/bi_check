@@ -1,0 +1,134 @@
+package app
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"bimonitor/internal/model"
+	"bimonitor/internal/schedule"
+)
+
+type testPlatform struct {
+	NullPlatform
+	toasts []string
+}
+
+func (p *testPlatform) Notify(title, text string, _ NotifyKind) {
+	p.toasts = append(p.toasts, title+": "+text)
+}
+
+func newTestApp(t *testing.T) (*App, *testPlatform, string) {
+	t.Helper()
+	dir := t.TempDir()
+	p := &testPlatform{}
+	a, err := New(p, Options{SettingsPath: filepath.Join(dir, "settings.json"), HistoryPath: filepath.Join(dir, "history.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Start()
+	t.Cleanup(a.Close)
+	return a, p, dir
+}
+
+func call[T any](t *testing.T, a *App, method string, params any) T {
+	t.Helper()
+	b, _ := json.Marshal(params)
+	res, err := a.Call(method, b)
+	if err != nil {
+		t.Fatalf("%s: %v", method, err)
+	}
+	var out T
+	rb, _ := json.Marshal(res)
+	if err := json.Unmarshal(rb, &out); err != nil {
+		t.Fatalf("%s result: %v", method, err)
+	}
+	return out
+}
+
+func TestItemCRUDAndCheck(t *testing.T) {
+	a, _, dir := newTestApp(t)
+	file := filepath.Join(dir, "export.csv")
+	os.WriteFile(file, []byte("x"), 0o644)
+
+	it := call[model.Item](t, a, "newItem", nil)
+	it.Name = "  Export  "
+	it.Path = file
+	it.Schedule = schedule.Spec{Type: schedule.Hourly}
+	it.EarlyMinutes = 59
+	saved := call[SaveResult](t, a, "saveItem", it)
+	if saved.View.Item.ID == "" || saved.View.Item.Name != "Export" {
+		t.Fatalf("%+v", saved)
+	}
+	id := saved.View.Item.ID
+
+	snap := call[Snapshot](t, a, "checkNow", id)
+	if len(snap.Items) != 1 || snap.Items[0].State.Status != model.StatusOK {
+		t.Fatalf("after check: %+v", snap.Items)
+	}
+
+	dup := call[ItemView](t, a, "duplicateItem", map[string]string{"id": id})
+	if dup.Item.ID == id || !strings.Contains(dup.Item.Name, "másolat") {
+		t.Fatalf("dup %+v", dup.Item)
+	}
+	off := call[ItemView](t, a, "setEnabled", map[string]any{"id": dup.Item.ID, "enabled": false})
+	if off.Item.Enabled || off.State.Status != model.StatusDisabled {
+		t.Fatalf("disable: %+v", off)
+	}
+	if _, err := a.Call("deleteItem", json.RawMessage(`{"id":"`+dup.Item.ID+`"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(call[Snapshot](t, a, "listItems", nil).Items); n != 1 {
+		t.Fatalf("items after delete: %d", n)
+	}
+}
+
+func TestValidation(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	bad := []model.Item{
+		{Name: "", Path: `\\s\x\a.csv`, Schedule: schedule.Spec{Type: schedule.Hourly}},
+		{Name: "x", Path: "", Schedule: schedule.Spec{Type: schedule.Hourly}},
+		{Name: "x", Path: `\\s\*\a.csv`, Schedule: schedule.Spec{Type: schedule.Hourly}},
+		{Name: "x", Path: `\\s\x\a.csv`, Schedule: schedule.Spec{Type: schedule.Daily}},
+		{Name: "x", Path: `\\s\x\a.csv`, Schedule: schedule.Spec{Type: schedule.Hourly}, GraceMinutes: -1},
+	}
+	for _, it := range bad {
+		b, _ := json.Marshal(it)
+		if _, err := a.Call("saveItem", b); err == nil {
+			t.Errorf("expected error for %+v", it)
+		}
+	}
+}
+
+func TestPreviewAndTestPath(t *testing.T) {
+	a, _, dir := newTestApp(t)
+	pv := call[Preview](t, a, "previewSchedule", PreviewParams{Schedule: schedule.Spec{Type: schedule.Daily, Times: []string{"06:00"}}, Count: 5})
+	if pv.Error != "" || len(pv.Next) != 5 || pv.Prev == nil || pv.Text != "Naponta 06:00" {
+		t.Fatalf("%+v", pv)
+	}
+	pv = call[Preview](t, a, "previewSchedule", PreviewParams{Schedule: schedule.Spec{Type: schedule.Cron, Cron: "x"}})
+	if pv.Error == "" {
+		t.Fatal("expected error")
+	}
+	f := filepath.Join(dir, "r_"+time.Now().Format("20060102")+".csv")
+	os.WriteFile(f, []byte("abc"), 0o644)
+	it := model.NewItem()
+	it.Name = "R"
+	it.Path = filepath.Join(dir, "r_{yyyyMMdd}.csv")
+	it.Schedule = schedule.Spec{Type: schedule.Hourly}
+	it.EarlyMinutes = 59
+	tr := call[TestResult](t, a, "testPath", it)
+	if tr.Error != "" || tr.Status != model.StatusOK {
+		t.Fatalf("%+v", tr)
+	}
+}
+
+func TestUnknownMethod(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	if _, err := a.Call("nope", nil); err == nil {
+		t.Fatal("expected error")
+	}
+}
