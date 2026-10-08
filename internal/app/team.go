@@ -202,7 +202,7 @@ func (a *App) registerTeamAPI() {
 		for i := range lists {
 			l := &lists[i]
 			l.Name = strings.TrimSpace(l.Name)
-			l.Path = strings.TrimSpace(strings.Trim(l.Path, `"`))
+			l.Path = CleanPath(l.Path)
 			if driveRe.MatchString(l.Path) {
 				if unc, ok := a.P.ToUNC(l.Path); ok {
 					l.Path = unc

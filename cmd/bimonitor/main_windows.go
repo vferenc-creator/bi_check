@@ -12,10 +12,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
@@ -86,6 +88,12 @@ func main() {
 		// window, WebView2 and the JS↔Go bridge all work.
 		var once sync.Once
 		a.OnCall = func(method string) {
+			if method == selftestDoneMethod {
+				select {
+				case selftestBrowseDone <- struct{}{}:
+				default:
+				}
+			}
 			if method == "listItems" {
 				once.Do(func() {
 					if !*selftestDialog {
@@ -110,31 +118,36 @@ func main() {
 	log.Printf("kilépés")
 }
 
-// selftestFileDialog opens the "Tallózás" dialog through the same RPC the UI
-// uses, checks that a dialog window really appears, then cancels it.
+const selftestDoneMethod = "__selftestBrowseDone"
+
+var selftestBrowseDone = make(chan struct{}, 1)
+
+// selftestFileDialog clicks "Tallózás" the same way the editor does – from
+// JavaScript, through the WebView2 bridge – with an existing pattern path in
+// a folder with Hungarian accents, checks that the dialog really appears,
+// then cancels it and waits for the JS promise to resolve.
 func selftestFileDialog(a *app.App, sh *desktop.Shell, out string) {
-	done := make(chan error, 1)
-	go func() {
-		_, err := a.Call("browseFile", []byte(`""`))
-		done <- err
-	}()
+	dir := filepath.Join(os.TempDir(), "002_fájl_átadás", "VF")
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "ideiglenes_sales_20261008.csv"), []byte("x"), 0o644)
+	current, _ := json.Marshal(`"` + filepath.Join(dir, "ideiglenes_sales_{yyyyMMdd}.csv") + `"`)
+	sh.EvalJS(`api("browseFile", ` + string(current) + `).then(r => api("` + selftestDoneMethod + `", r), e => api("` + selftestDoneMethod + `", {error: String(e)}))`)
+
 	result := "dialog-missing"
 	for i := 0; i < 100; i++ {
 		time.Sleep(200 * time.Millisecond)
 		if dlg := winapi.FindOwnDialog(); dlg != 0 {
 			result = "ok"
+			time.Sleep(300 * time.Millisecond)
 			winapi.PostMessage(dlg, winapi.WM_COMMAND, 2 /* IDCANCEL */, 0)
 			break
 		}
 	}
 	select {
-	case err := <-done:
-		if err != nil && result == "ok" {
-			result = "dialog-error: " + err.Error()
-		}
+	case <-selftestBrowseDone:
 	case <-time.After(10 * time.Second):
 		if result == "ok" {
-			result = "dialog-did-not-close"
+			result = "js-promise-not-resolved"
 		}
 	}
 	log.Printf("selftest dialog: %s", result)

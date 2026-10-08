@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -69,7 +70,7 @@ func (a *App) normalizeItem(it *model.Item) (warnings []string, err error) {
 	it.Name = strings.TrimSpace(it.Name)
 	it.Group = strings.TrimSpace(it.Group)
 	it.Owner = strings.TrimSpace(it.Owner)
-	it.Path = strings.TrimSpace(strings.Trim(strings.TrimSpace(it.Path), `"`))
+	it.Path = CleanPath(it.Path)
 	if it.Name == "" {
 		return nil, errors.New("a név megadása kötelező")
 	}
@@ -319,6 +320,7 @@ func (a *App) registerItemAPI() {
 	})
 
 	a.register("browseFile", func(current string) (BrowseResult, error) {
+		current = CleanPath(current)
 		dir := ""
 		if c := strings.TrimSpace(current); c != "" && !strings.ContainsAny(c, "*?{") {
 			dir = filepath.Dir(c)
@@ -327,12 +329,14 @@ func (a *App) registerItemAPI() {
 				dir = c[:i]
 			}
 		}
+		log.Printf("browseFile: kezdő mappa %q", dir)
 		p, ok := a.P.OpenFileDialog("Figyelendő fájl kiválasztása", dir, []FileFilter{
 			{"Minden fájl", "*.*"},
 			{"Excel", "*.xlsx;*.xlsm;*.xls"},
 			{"CSV / szöveg", "*.csv;*.txt"},
 			{"Parquet", "*.parquet"},
 		})
+		log.Printf("browseFile: eredmény ok=%v %q", ok, p)
 		if !ok {
 			return BrowseResult{}, nil
 		}
@@ -349,6 +353,7 @@ func (a *App) registerItemAPI() {
 	})
 
 	a.register("toUNC", func(p string) (BrowseResult, error) {
+		p = CleanPath(p)
 		out := BrowseResult{Path: p}
 		if driveRe.MatchString(p) {
 			if unc, ok := a.P.ToUNC(p); ok {

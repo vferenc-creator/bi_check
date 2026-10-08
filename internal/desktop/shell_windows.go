@@ -303,6 +303,15 @@ func (sh *Shell) Push(event string, data any) {
 	})
 }
 
+// EvalJS runs JavaScript in the UI (if the window is open).
+func (sh *Shell) EvalJS(js string) {
+	sh.Do(func() {
+		if sh.win != nil {
+			sh.win.eval(js)
+		}
+	})
+}
+
 func (sh *Shell) owner() uintptr {
 	if sh.win != nil {
 		return sh.win.hwnd

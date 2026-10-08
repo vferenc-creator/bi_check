@@ -167,6 +167,20 @@ function fmtSize(b) {
   do { b /= 1024; i++; } while (b >= 1024 && i < u.length - 1);
   return b.toFixed(b < 10 ? 1 : 0).replace(".", ",") + " " + u[i];
 }
+// cleanPath removes quotes around a pasted path (Explorer "Copy as path"
+// wraps it in "…"). Mirrors app.CleanPath on the Go side.
+function cleanPath(p) {
+  p = (p || "").trim();
+  for (let i = 0; i < 3; i++) {
+    const before = p;
+    for (const [a, b] of [['"', '"'], ["'", "'"], ["„", "”"], ["“", "”"], ["”", "”"], ["‘", "’"], ["«", "»"]]) {
+      if (p.length >= 2 && p.startsWith(a) && p.endsWith(b)) p = p.slice(a.length, p.length - b.length).trim();
+    }
+    p = p.replace(/^["„”“]+|["„”“]+$/g, "").trim();
+    if (p === before) break;
+  }
+  return p;
+}
 function relTime(s) {
   const d = parseT(s); if (!d) return "–";
   const sec = (Date.now() - d.getTime()) / 1000;
@@ -581,7 +595,14 @@ async function openEditor(item) {
   }
 
   const pathInput = text(it, "path", { class: "input mono grow", placeholder: "\\\\EFS-FSRHQ\\Groups\\BI\\export.xlsx", spellcheck: false });
+  const tidyPath = () => {
+    const c = cleanPath(pathInput.value);
+    if (c !== pathInput.value) { pathInput.value = c; it.path = c; onChange("path"); }
+  };
+  pathInput.addEventListener("paste", () => setTimeout(tidyPath, 0));
+  pathInput.addEventListener("change", tidyPath);
   pathInput.addEventListener("blur", async () => {
+    tidyPath();
     if (/^[a-zA-Z]:[\\/]/.test(it.path)) {
       try {
         const r = await api("toUNC", it.path);
