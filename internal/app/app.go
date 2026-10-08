@@ -18,6 +18,7 @@ import (
 	"bimonitor/internal/checker"
 	"bimonitor/internal/engine"
 	"bimonitor/internal/model"
+	"bimonitor/internal/notify"
 	"bimonitor/internal/store"
 )
 
@@ -32,6 +33,13 @@ type App struct {
 
 	Checker *checker.Checker
 	Engine  *engine.Engine
+	History *store.History // nil if the database could not be opened
+
+	policy      *notify.Policy
+	noticeMu    sync.Mutex
+	noticeBuf   []notify.Notice
+	noticeTimer *time.Timer
+	stop        chan struct{}
 
 	mu       sync.Mutex
 	handlers map[string]handler
@@ -69,18 +77,39 @@ func New(p Platform, opt Options) (*App, error) {
 	if loc == nil {
 		loc = loadBudapest()
 	}
-	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}}
+	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}, stop: make(chan struct{})}
+	if opt.HistoryPath != "" {
+		h, err := store.OpenHistory(opt.HistoryPath)
+		if err != nil {
+			log.Printf("history: %v (előzmények nélkül fut)", err)
+		} else {
+			a.History = h
+		}
+	}
+	if a.History != nil {
+		a.policy = notify.NewPolicy(a.History)
+	} else {
+		a.policy = notify.NewPolicy(nil)
+	}
 	s := st.Get()
 	a.cal = calendar.New(s.Calendar)
 	a.Checker = checker.New(nil, checker.Options{Timeout: time.Duration(s.TimeoutSec) * time.Second})
 	a.Engine = engine.New(engine.Config{
 		Checker:  a.Checker,
 		Loc:      loc,
-		OnEvents: a.onEvents,
+		OnEvents: a.handleEvents,
 		OnChange: a.schedulePush,
+		SizeHistory: func(id string) []int64 {
+			if a.History == nil {
+				return nil
+			}
+			return a.History.RecentSizes(id, 10)
+		},
 	})
 	a.registerAll()
 	a.registerItemAPI()
+	a.registerHistoryAPI()
+	a.registerTransferAPI()
 	return a, nil
 }
 
@@ -98,6 +127,7 @@ func (a *App) Start() {
 	a.cancel = cancel
 	a.reconfigure()
 	go a.Engine.Run(ctx)
+	go a.background(a.stop)
 }
 
 // Close stops background work.
@@ -110,6 +140,11 @@ func (a *App) Close() {
 	a.closed = true
 	if a.cancel != nil {
 		a.cancel()
+	}
+	close(a.stop)
+	if a.History != nil {
+		time.Sleep(50 * time.Millisecond) // let the last heartbeat land
+		a.History.Close()
 	}
 }
 
@@ -134,15 +169,6 @@ func (a *App) Calendar() *calendar.Calendar {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.cal
-}
-
-// onEvents receives transitions and arrivals from the engine.
-func (a *App) onEvents(evs []engine.Event) {
-	for _, ev := range evs {
-		if ev.Kind == engine.EvTransition {
-			log.Printf("[%s] %s → %s: %s", ev.Item.Name, ev.Old.Status, ev.New.Status, ev.New.Reason)
-		}
-	}
 }
 
 // schedulePush coalesces state changes into one UI push every 250 ms.

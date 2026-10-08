@@ -18,6 +18,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -66,7 +67,8 @@ func main() {
 		}
 	}()
 
-	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED); err != nil {
+	// S_FALSE (1) just means COM was already initialized on this thread.
+	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED); err != nil && err != syscall.Errno(1) {
 		log.Printf("CoInitializeEx: %v", err)
 	}
 

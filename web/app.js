@@ -48,7 +48,12 @@ function h(tag, attrs, ...children) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === undefined || v === null || v === false) continue;
     if (k === "class") el.className = v;
-    else if (k === "style" && typeof v === "object") Object.assign(el.style, v);
+    else if (k === "style" && typeof v === "object") {
+      for (const [sk, sv] of Object.entries(v)) {
+        if (sk.startsWith("--")) el.style.setProperty(sk, sv);
+        else el.style[sk] = sv;
+      }
+    }
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (k === "html") el.innerHTML = v;
     else if (k in el && k !== "list" && typeof v !== "string") el[k] = v;
@@ -227,6 +232,7 @@ function renderSidebar() {
     }
   }
   sb.append(h("div", { class: "spacer" }));
+  sb.append(nav("events", "Eseménynapló", "calendar", undefined, { active: S.view === "events", onclick: () => go("events") }));
   sb.append(nav("settings", "Beállítások", "gear", undefined, { active: S.view === "settings", onclick: () => go("settings") }));
   sb.append(nav("about", "Névjegy", "info", undefined, { active: S.view === "about", onclick: () => go("about") }));
 }
@@ -303,6 +309,8 @@ views.items = main => {
       h("div", { class: "sub" }, rows.length + " / " + S.items.length + " elem" + (last ? " · utolsó ellenőrzés: " + fmtDateTime(last, true) : ""))),
     h("div", { class: "grow" }),
     S.statusFilter || S.search ? h("button", { class: "btn sm ghost", onclick: () => { S.statusFilter = ""; S.search = ""; $("#search").value = ""; render(); } }, icon("close"), "Szűrés törlése") : null,
+    h("button", { class: "btn sm", onclick: importItems, title: "Elemek importálása JSON vagy CSV fájlból" }, icon("upload"), "Import"),
+    h("button", { class: "btn sm", onclick: e => { e.stopPropagation(); exportMenu(e.currentTarget); }, title: "Elemek exportálása" }, icon("download"), "Export"),
   ));
   if (S.snap && S.snap.pausedUntil && parseT(S.snap.pausedUntil) > new Date()) {
     main.append(h("div", { class: "banner" }, icon("bellOff"), h("span", { class: "grow" }, "Az értesítések szünetelnek eddig: " + fmtDateTime(S.snap.pausedUntil)),
@@ -811,6 +819,156 @@ document.addEventListener("keydown", e => {
   if (e.key === "f" && e.ctrlKey) { e.preventDefault(); $("#search").focus(); }
 });
 
+// ---------------------------------------------------------------------------
+// History, acknowledgement, event log, import/export (phase 3)
+// ---------------------------------------------------------------------------
+const histCache = new Map(); // id → {at, data}
+
+async function ackItem(id, acked) {
+  try { await api("ackItem", { id, acked }); await refresh(); toast(acked ? "Nyugtázva – erről a problémáról nem szól újra." : "Nyugtázás visszavonva."); } catch (e) { fail(e); }
+}
+
+function renderHistory(body, it, st) {
+  if (["missing", "unreachable", "suspicious", "late"].includes(st.status)) {
+    body.insertBefore(h("div", { class: "row", style: { marginBottom: "6px" } },
+      st.acked
+        ? h("button", { class: "btn sm", onclick: () => ackItem(it.id, false) }, icon("bell"), "Nyugtázás visszavonása")
+        : h("button", { class: "btn sm", onclick: () => ackItem(it.id, true) }, icon("ack"), "Nyugtázás – tudok róla")), body.children[1]);
+  }
+  const box = h("div");
+  body.append(box);
+  const c = histCache.get(it.id);
+  if (c) drawHistory(box, c.data, it);
+  if (!c || Date.now() - c.at > 15000) {
+    api("getHistory", { id: it.id, days: 30 }).then(data => {
+      histCache.set(it.id, { at: Date.now(), data });
+      if (S.selected === it.id && box.isConnected) { clear(box); drawHistory(box, data, it); }
+    }).catch(() => {});
+  }
+}
+
+const CELL_C = { ok: "var(--ok)", late: "var(--late)", missed: "var(--missing)", pending: "var(--waiting)", unknown: "var(--disabled)" };
+const CELL_T = { ok: "időben", late: "késve", missed: "kimaradt", pending: "folyamatban", unknown: "nem mért (a program nem futott)" };
+
+function drawHistory(box, d, it) {
+  const s = d.stats;
+  box.append(h("div", { class: "section-t" }, "Utolsó 30 nap"));
+  const measured = s.onTime + s.late + s.missed;
+  box.append(h("div", { class: "stats" },
+    h("div", { class: "stat" }, h("b", {}, measured ? Math.round(s.punctuality) + "%" : "–"), h("span", {}, "pontosság")),
+    h("div", { class: "stat" }, h("b", {}, s.onTime + s.late ? fmtDur(s.avgDelaySec) : "–"), h("span", {}, "átlagos késés")),
+    h("div", { class: "stat" }, h("b", {}, s.onTime + s.late ? fmtDur(s.maxDelaySec) : "–"), h("span", {}, "legnagyobb késés")),
+    h("div", { class: "stat" }, h("b", { style: { color: s.missed ? "var(--missing)" : "" } }, s.missed), h("span", {}, "kimaradt / " + (s.expected || 0)))));
+  if (d.timeline.length) {
+    box.append(h("div", { class: "section-t" }, "Idővonal (utolsó " + d.timeline.length + " elvárt lerakás)"));
+    const tl = h("div", { class: "timeline" });
+    for (const c of d.timeline) {
+      let tip = fmtDateTime(c.expected) + " – " + CELL_T[c.status];
+      if (c.modTime) tip += "\nmegérkezett: " + fmtDateTime(c.modTime) + (c.delaySec > 0 ? " (+" + fmtDur(c.delaySec) + ")" : "");
+      tl.append(h("div", { class: "cell", title: tip, style: { "--c": CELL_C[c.status] || "var(--border)" } }));
+    }
+    box.append(tl);
+    box.append(h("div", { class: "row small muted", style: { marginTop: "6px", gap: "12px", flexWrap: "wrap" } },
+      Object.entries({ ok: "időben", late: "késve", missed: "kimaradt", unknown: "nem mért" }).map(([k, l]) =>
+        h("span", { class: "row", style: { gap: "4px" } }, h("span", { style: { width: "10px", height: "10px", borderRadius: "2px", background: CELL_C[k] } }), l))));
+  }
+  if (d.sizes.length > 1) {
+    box.append(h("div", { class: "section-t" }, "Fájlméret alakulása"));
+    box.append(sparkline(d.sizes));
+  }
+  const evs = [];
+  for (const a of d.arrivals) evs.push({ t: a.modTime, el: h("span", {}, "Új fájl: ", h("span", { class: "mono" }, a.filePath.split(/[\\/]/).pop()), " · " + fmtSize(a.size) + (a.delaySec !== undefined && a.delaySec !== null && a.delaySec > 0 ? " · +" + fmtDur(a.delaySec) : "")) });
+  for (const tr of d.transitions) evs.push({ t: tr.at, el: h("span", {}, pill(tr.from, STATUS[tr.from]), " → ", pill(tr.to, STATUS[tr.to]), h("div", { class: "small muted", style: { marginTop: "3px" } }, tr.reason)) });
+  evs.sort((a, b) => new Date(b.t) - new Date(a.t));
+  box.append(h("div", { class: "section-t" }, "Események"));
+  if (!evs.length) box.append(h("div", { class: "small muted" }, "Még nincs rögzített esemény."));
+  const list = h("div", { class: "events" });
+  for (const e of evs.slice(0, 40)) list.append(h("div", { class: "event" }, h("span", { class: "t" }, fmtDateTime(e.t)), h("div", { class: "grow" }, e.el)));
+  box.append(list);
+}
+
+function sparkline(vals) {
+  const W = 480, H = 56, P = 4;
+  const max = Math.max(...vals), min = Math.min(...vals);
+  const span = max - min || 1;
+  const pts = vals.map((v, i) => [P + i * (W - 2 * P) / Math.max(1, vals.length - 1), H - P - (v - min) / span * (H - 2 * P)]);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("class", "spark");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = `<polyline fill="none" stroke="var(--accent-dark)" stroke-width="2" vector-effect="non-scaling-stroke" points="${pts.map(p => p.join(",")).join(" ")}"/>` +
+    pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="2.2" fill="var(--accent)"/>`).join("");
+  const wrap = h("div", {}, svg, h("div", { class: "row small muted" }, h("span", {}, "min " + fmtSize(min)), h("span", { class: "grow" }), h("span", {}, "max " + fmtSize(max))));
+  return wrap;
+}
+
+// ---- Event log ---------------------------------------------------------
+views.events = main => {
+  main.append(h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Eseménynapló"), h("div", { class: "sub" }, "Állapotváltozások az elmúlt 7 napban"))));
+  const box = h("div", { class: "card" }, h("div", { class: "card-b small muted" }, "Betöltés…"));
+  main.append(box);
+  api("eventLog", 7).then(rows => {
+    clear(box);
+    if (!rows.length) { box.append(h("div", { class: "empty" }, h("h2", {}, "Nincs esemény"), h("p", {}, "Az elmúlt 7 napban nem változott egyetlen elem állapota sem."))); return; }
+    const tb = h("tbody");
+    for (const r of rows) {
+      tb.append(h("tr", { onclick: () => { if (S.items.some(x => x.item.id === r.itemId)) { go("items"); openDrawer(r.itemId); } } },
+        h("td", { class: "when" }, fmtDateTime(r.at, true)),
+        h("td", {}, h("span", { class: "name" }, r.itemName), r.group ? h("span", { class: "group-tag" }, r.group) : null),
+        h("td", {}, pill(r.from, STATUS[r.from]), " → ", pill(r.to, STATUS[r.to])),
+        h("td", { class: "small" }, r.reason)));
+    }
+    box.replaceWith(h("table", { class: "table" },
+      h("colgroup", {}, h("col", { style: { width: "150px" } }), h("col", { style: { width: "24%" } }), h("col", { style: { width: "250px" } }), h("col")),
+      h("thead", {}, h("tr", {}, h("th", { class: "nosort" }, "Időpont"), h("th", { class: "nosort" }, "Elem"), h("th", { class: "nosort" }, "Változás"), h("th", { class: "nosort" }, "Indoklás"))), tb));
+  }).catch(fail);
+};
+
+// ---- Import / export -------------------------------------------------------
+function exportMenu(anchor) {
+  showMenu(anchor, [
+    { label: "Exportálás JSON-ba (megosztáshoz)", icon: "download", run: () => exportItems("json") },
+    { label: "Exportálás CSV-be (Excel)", icon: "download", run: () => exportItems("csv") },
+  ]);
+}
+async function exportItems(format) {
+  try { const p = await api("exportItems", { format }); if (p) toast("Exportálva: " + p); } catch (e) { fail(e); }
+}
+async function importItems() {
+  let pv;
+  try { pv = await api("importPreview"); } catch (e) { return fail(e); }
+  if (!pv || !pv.rows) return;
+  const rows = pv.rows.map(r => Object.assign({ sel: r.action !== "invalid" }, r));
+  const ov = h("div", { class: "overlay" });
+  const close = () => ov.remove();
+  const tb = h("tbody");
+  const label = { add: "új", update: "frissítés", invalid: "hibás" };
+  for (const r of rows) {
+    tb.append(h("tr", {},
+      h("td", {}, h("input", { type: "checkbox", checked: r.sel, disabled: r.action === "invalid", onchange: e => { r.sel = e.target.checked; } })),
+      h("td", {}, h("span", { class: "name" }, r.item.name || "(névtelen)"), r.item.group ? h("span", { class: "group-tag" }, r.item.group) : null),
+      h("td", {}, h("div", { class: "path", title: r.item.path }, "‎" + r.item.path)),
+      h("td", { class: "small" }, h("b", { style: { color: r.action === "invalid" ? "var(--missing)" : r.action === "update" ? "var(--late)" : "var(--ok)" } }, label[r.action]),
+        r.match ? h("div", { class: "muted" }, "meglévő: " + r.match) : null, r.error ? h("div", { style: { color: "var(--missing)" } }, r.error) : null)));
+  }
+  ov.append(h("div", { class: "modal" },
+    h("div", { class: "m-head" }, h("h2", {}, "Importálás"), h("span", { class: "small muted mono" }, pv.file)),
+    h("div", { class: "m-body" },
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "Az azonos azonosítójú vagy azonos útvonalú elemek frissülnek, a többi új elemként kerül fel."),
+      h("table", { class: "table" }, h("colgroup", {}, h("col", { style: { width: "40px" } }), h("col", { style: { width: "28%" } }), h("col"), h("col", { style: { width: "180px" } })),
+        h("thead", {}, h("tr", {}, h("th", { class: "nosort" }, ""), h("th", { class: "nosort" }, "Név"), h("th", { class: "nosort" }, "Útvonal"), h("th", { class: "nosort" }, "Művelet"))), tb)),
+    h("div", { class: "m-foot" },
+      h("button", { class: "btn", onclick: close }, "Mégse"),
+      h("button", { class: "btn primary", onclick: async () => {
+        try {
+          const c = await api("importApply", rows.filter(r => r.sel));
+          close(); await refresh();
+          toast("Import kész: " + c.added + " új, " + c.updated + " frissítve.");
+        } catch (e) { fail(e); }
+      } }, icon("upload"), "Importálás"))));
+  document.body.append(ov);
+}
+
 // ---- Settings view -------------------------------------------------------
 views.settings = main => {
   const s = JSON.parse(JSON.stringify(S.settings));
@@ -846,6 +1004,7 @@ views.settings = main => {
       row("Csendes időszak", "Ilyenkor nem jelenik meg értesítés; a végén összefoglalót kap.", sw(n.quiet, "enabled")),
       row("Csendes időszak kezdete / vége", null, h("div", { class: "row" }, timeIn(n.quiet, "from"), "–", timeIn(n.quiet, "to"))),
       row("Hétvégén is csendes", "Szombaton és vasárnap egész nap.", sw(n.quiet, "weekends")),
+      row("Próbaértesítés", "Megjelenít egy minta értesítést.", h("button", { class: "btn sm", onclick: () => api("testNotification").catch(fail) }, icon("bell"), "Küldés")),
     )));
 
   async function save() {

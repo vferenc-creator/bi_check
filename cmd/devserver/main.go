@@ -11,10 +11,15 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
+
+	"bimonitor/internal/schedule"
+	"bimonitor/internal/store"
 
 	"bimonitor/internal/app"
 	"bimonitor/internal/model"
@@ -70,6 +75,7 @@ func (p *devPlatform) AutostartEnabled() bool     { return p.autostart }
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address")
 	data := flag.String("data", "devdata", "data directory")
+	seed := flag.Bool("seed", false, "fill the history with 30 days of fake events (demo)")
 	flag.Parse()
 	_ = os.MkdirAll(*data, 0o755)
 
@@ -80,6 +86,9 @@ func main() {
 	})
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *seed {
+		seedHistory(a)
 	}
 	a.Start()
 	defer a.Close()
@@ -136,4 +145,47 @@ func main() {
 	})
 	log.Printf("UI: http://%s/", *addr)
 	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+// seedHistory invents 30 days of arrivals so the history UI can be previewed.
+func seedHistory(a *app.App) {
+	if a.History == nil {
+		return
+	}
+	now := time.Now()
+	from := now.AddDate(0, 0, -30)
+	_, _ = a.Settings.Update(func(s *model.Settings) error {
+		for i := range s.Items {
+			s.Items[i].CreatedAt = from.AddDate(0, 0, -1)
+		}
+		return nil
+	})
+	up := a.History.StartUptime(from)
+	up.Beat(now)
+	rnd := rand.New(rand.NewSource(42))
+	for _, it := range a.Settings.Get().Items {
+		sc, err := schedule.Compile(it.Schedule, a.Calendar(), a.Loc)
+		if err != nil {
+			continue
+		}
+		size := int64(1_000_000 + rnd.Intn(4_000_000))
+		for _, t := range sc.Between(from, now.Add(-time.Hour), 2000) {
+			r := rnd.Float64()
+			if r < 0.04 {
+				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(it.Grace()), From: "late", To: "missing", Reason: "Nem érkezett meg időben.", Expected: &t})
+				continue
+			}
+			delay := time.Duration(rnd.Intn(8)) * time.Minute
+			if r > 0.9 {
+				delay = it.Grace() + time.Duration(5+rnd.Intn(60))*time.Minute
+				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(it.Grace()), From: "late", To: "missing", Reason: "Nem érkezett meg (határidő lejárt).", Expected: &t})
+				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(delay), From: "missing", To: "ok", Reason: "Megérkezett késéssel.", Expected: &t})
+			}
+			size += int64(rnd.Intn(60_000)) - 25_000
+			d := int64(delay / time.Second)
+			tt := t
+			_, _ = a.History.RecordArrival(store.Arrival{ItemID: it.ID, FilePath: it.Path, ModTime: t.Add(delay), Size: size, Expected: &tt, DelaySec: &d, SeenAt: t.Add(delay)})
+		}
+	}
+	log.Printf("history seeded")
 }

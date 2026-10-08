@@ -132,3 +132,53 @@ func TestUnknownMethod(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestCSVRoundTrip(t *testing.T) {
+	it := model.NewItem()
+	it.Name = "Értékesítés; \"napi\""
+	it.Path = `\\EFS-FSRHQ\Groups\BI\sales_{yyyyMMdd}.csv`
+	it.Group = "KNIME"
+	it.Schedule = schedule.Spec{Type: schedule.Weekly, Weekdays: []int{1, 3}, Times: []string{"07:00"}, HolidayRule: schedule.HolidayNext}
+	it.Suspicious.MinBytes = 2048
+	data := EncodeCSV([]model.Item{it})
+	back, err := DecodeItems(data)
+	if err != nil || len(back) != 1 {
+		t.Fatal(err, back)
+	}
+	b := back[0]
+	if b.Name != it.Name || b.Path != it.Path || b.Schedule.HolidayRule != schedule.HolidayNext || len(b.Schedule.Weekdays) != 2 || b.Suspicious.MinBytes != 2048 || b.ID != it.ID {
+		t.Fatalf("%+v", b)
+	}
+}
+
+func TestImportMerge(t *testing.T) {
+	a, _, dir := newTestApp(t)
+	it := model.NewItem()
+	it.Name = "A"
+	it.Path = filepath.Join(dir, "a.csv")
+	saved := call[SaveResult](t, a, "saveItem", it)
+
+	upd := saved.View.Item
+	upd.Name = "A frissítve"
+	other := model.NewItem()
+	other.Name = "B"
+	other.Path = filepath.Join(dir, "b.csv")
+	samePath := model.NewItem()
+	samePath.Name = "A más ID-vel"
+	samePath.Path = filepath.Join(dir, "a.csv")
+	bad := model.NewItem()
+	bad.Name = ""
+	bad.Path = "x"
+	rows := a.previewImport([]model.Item{upd, other, samePath, bad})
+	if rows[0].Action != "update" || rows[1].Action != "add" || rows[2].Action != "update" || rows[3].Action != "invalid" {
+		t.Fatalf("%+v", rows)
+	}
+	counts, err := a.applyImport(rows[:2])
+	if err != nil || counts["added"] != 1 || counts["updated"] != 1 {
+		t.Fatal(counts, err)
+	}
+	items := a.Settings.Get().Items
+	if len(items) != 2 || items[0].Name != "A frissítve" {
+		t.Fatalf("%+v", items)
+	}
+}
