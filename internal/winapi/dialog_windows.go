@@ -4,7 +4,7 @@ package winapi
 
 import (
 	"log"
-	"strings"
+	u16 "unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -49,18 +49,21 @@ const (
 // FileFilter is a "name" + "*.ext;*.ext2" pair.
 type FileFilter struct{ Name, Pattern string }
 
+// filterString builds the double-NUL terminated "name\0pattern\0...\0\0"
+// list GetOpenFileName expects. (windows.StringToUTF16 must not be used here:
+// it panics on embedded NULs.)
 func filterString(filters []FileFilter) *uint16 {
 	if len(filters) == 0 {
 		filters = []FileFilter{{"Minden fájl", "*.*"}}
 	}
-	var sb strings.Builder
+	var u []uint16
 	for _, f := range filters {
-		sb.WriteString(f.Name)
-		sb.WriteByte(0)
-		sb.WriteString(f.Pattern)
-		sb.WriteByte(0)
+		u = append(u, u16.Encode([]rune(f.Name))...)
+		u = append(u, 0)
+		u = append(u, u16.Encode([]rune(f.Pattern))...)
+		u = append(u, 0)
 	}
-	u := windows.StringToUTF16(sb.String()) // adds the final NUL
+	u = append(u, 0)
 	return &u[0]
 }
 
@@ -101,12 +104,19 @@ func fileDialog(save bool, owner uintptr, title, initialDir, defaultName, defExt
 	return windows.UTF16ToString(buf), true
 }
 
-// OpenFileDialog shows the native "Open" dialog.
+// OpenFileDialog shows the native "Open" dialog (modern IFileOpenDialog,
+// legacy GetOpenFileName as fallback).
 func OpenFileDialog(owner uintptr, title, initialDir string, filters []FileFilter) (string, bool) {
+	if p, ok, used := modernDialog(owner, dialogOpts{title: title, initialDir: initialDir, filters: filters}); used {
+		return p, ok
+	}
 	return fileDialog(false, owner, title, initialDir, "", "", filters)
 }
 
 // SaveFileDialog shows the native "Save as" dialog.
 func SaveFileDialog(owner uintptr, title, defaultName, defExt string, filters []FileFilter) (string, bool) {
+	if p, ok, used := modernDialog(owner, dialogOpts{save: true, title: title, defaultName: defaultName, defExt: defExt, filters: filters}); used {
+		return p, ok
+	}
 	return fileDialog(true, owner, title, "", defaultName, defExt, filters)
 }

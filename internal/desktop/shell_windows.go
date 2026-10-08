@@ -6,6 +6,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	"log"
 	"sync"
@@ -317,15 +318,29 @@ func toWinFilters(f []app.FileFilter) []winapi.FileFilter {
 	return out
 }
 
+// dialogTask runs a dialog on the UI thread; a failure is reported to the
+// user instead of silently doing nothing.
+func (sh *Shell) dialogTask(f func()) {
+	sh.DoWait(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("file dialog panic: %v", r)
+				sh.Push("toast", map[string]any{"text": fmt.Sprintf("A fájlválasztó nem nyitható meg: %v", r), "error": true})
+			}
+		}()
+		f()
+	})
+}
+
 // OpenFileDialog shows the native open dialog (blocks the caller, not the UI).
 func (sh *Shell) OpenFileDialog(title, initialDir string, filters []app.FileFilter) (path string, ok bool) {
-	sh.DoWait(func() { path, ok = winapi.OpenFileDialog(sh.owner(), title, initialDir, toWinFilters(filters)) })
+	sh.dialogTask(func() { path, ok = winapi.OpenFileDialog(sh.owner(), title, initialDir, toWinFilters(filters)) })
 	return
 }
 
 // SaveFileDialog shows the native save dialog.
 func (sh *Shell) SaveFileDialog(title, defaultName, defExt string, filters []app.FileFilter) (path string, ok bool) {
-	sh.DoWait(func() {
+	sh.dialogTask(func() {
 		path, ok = winapi.SaveFileDialog(sh.owner(), title, defaultName, defExt, toWinFilters(filters))
 	})
 	return
