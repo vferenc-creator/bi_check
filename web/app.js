@@ -416,6 +416,7 @@ function itemRow(r, cols) {
     h("td", {}, h("div", { class: "status-cell" },
       st.checking ? h("span", { class: "pill st-unknown" }, icon("refresh", "spin"), "Ellenőrzés…") : pill(st.status),
       st.acked ? h("span", { class: "group-tag", title: "Nyugtázva" }, "nyugtázva") : null,
+      st.gap ? h("span", { class: "group-tag", title: st.reason || "" }, "üres ablak") : null,
       st.recheck && !st.checking ? h("span", { class: "group-tag", title: "Átmeneti hiba: " + (st.recheckReason || "") + " – néhány másodperc múlva újra megnézi, csak ismételt hiba esetén jelez." }, "újrapróbál…") : null)),
     h("td", {},
       h("div", { class: "name", title: it.name }, it.name),
@@ -573,6 +574,7 @@ function renderDrawer() {
   if (st.resolved && st.resolved !== it.path) add("Vizsgált", st.resolved, "mono selectable");
   if (st.file) add("Talált fájl", st.file.path, "mono selectable");
   add("Ütemezés", st.scheduleText);
+  add("Üres ablak", it.gap && it.gap.enabled ? "naponta " + it.gap.from + "–" + it.gap.to : null);
   if (st.scheduleError) add("Ütemezési hiba", st.scheduleError);
   add("Elvárt időpont", parseT(st.expected) ? fmtDateTime(st.expected) : null);
   add("Határidő", parseT(st.deadline) ? fmtDateTime(st.deadline) + " (türelmi idő: " + it.graceMinutes + " perc)" : null);
@@ -722,6 +724,29 @@ async function openEditor(item) {
     pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
       "Minta: ", h("code", {}, "*"), " és ", h("code", {}, "?"), " a fájlnévben; dátum: ", h("code", {}, "{yyyyMMdd}"), ", ", h("code", {}, "{yyyy-MM-dd}"),
       ", eltolással ", h("code", {}, "{yyyyMMdd:-1d}"), ". Mintánál a legfrissebb illeszkedő fájl számít."));
+  }
+
+  // Daily window in which the file may be missing (e.g. a script deletes it
+  // before writing the new one).
+  function gapEditor() {
+    if (!it.gap) it.gap = { enabled: false };
+    const g = it.gap;
+    const box = h("div", { class: "gap-box" });
+    const tIn = key => h("input", { class: "input narrow", type: "time", value: g[key] || "", oninput: e => { g[key] = e.target.value; onChange("gap"); } });
+    const draw = () => {
+      clear(box).append(
+        h("div", { class: "row wrap", style: { gap: "10px 16px" } },
+          h("label", { class: "switch" }, h("input", { type: "checkbox", checked: !!g.enabled, onchange: e => {
+            g.enabled = e.target.checked;
+            if (g.enabled && !g.from) { g.from = "00:00"; g.to = "06:00"; }
+            draw(); onChange("gap");
+          } }), "Üres ablak (megengedett hiány) naponta"),
+          g.enabled ? h("span", { class: "row", style: { gap: "6px" } }, tIn("from"), "–", tIn("to")) : null),
+        h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.45 } },
+          "Ebben az idősávban a fájl hiánya nem hiba és nem jár értesítéssel – pl. ha egy script törli, mielőtt újra lerakja. Átnyúlhat éjfélen (pl. 23:00–02:00); utána a szokásos szabályok érvényesek."));
+    };
+    draw();
+    return box;
   }
 
   function timesEditor() {
@@ -890,7 +915,8 @@ async function openEditor(item) {
         h("fieldset", {}, h("legend", {}, "Tolerancia"),
           h("div", { class: "grid2" },
             field("Türelmi idő (perc)", number(it, "graceMinutes", { min: 0 }), "ennyi ideig „Késik”, utána „Hiányzik”"),
-            field("Korai érkezés elfogadása (perc)", number(it, "earlyMinutes", { min: 0 }), "az elvárt időpont előtt ennyivel érkező fájl is jó"))),
+            field("Korai érkezés elfogadása (perc)", number(it, "earlyMinutes", { min: 0 }), "az elvárt időpont előtt ennyivel érkező fájl is jó")),
+          gapEditor()),
         h("fieldset", {}, h("legend", {}, "Gyanús fájl"),
           h("div", { class: "grid3" },
             h("div", { class: "field" }, "Üres fájl", h("div", { class: "ctrl-h" }, sw(sus, "zeroBytes", "0 bájtos fájl gyanús"))),
@@ -936,6 +962,7 @@ async function openEditor(item) {
       case "útvonal": return x.path; case "dátum token": return x.tokenMode === "any" ? "bármilyen dátum" : "elvárt nap";
       case "türelmi idő": return x.graceMinutes + " perc"; case "korai tolerancia": return x.earlyMinutes + " perc";
       case "figyelés be/ki": return x.enabled ? "bekapcsolva" : "kikapcsolva";
+      case "megengedett hiány": return x.gap && x.gap.enabled ? "naponta " + x.gap.from + "–" + x.gap.to : "nincs";
       case "gyanússági szabályok": return (x.suspicious.zeroBytes ? "0 bájt gyanús, " : "") + "min. " + Math.round((x.suspicious.minBytes || 0) / 1024) + " KB, csökkenés " + (x.suspicious.dropPercent || 0) + "%";
       case "ütemezés": return JSON.stringify(x.schedule);
     }

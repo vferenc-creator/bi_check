@@ -4,6 +4,8 @@ package model
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -86,6 +88,69 @@ const (
 	TokenAny  TokenMode = "any" // match any digits of the same length
 )
 
+// GapWindow is a daily time window in which the file may be missing – for
+// example a script deletes it before writing the new version. Inside the
+// window "missing" or "late" is shown as waiting, without a notification.
+// The window crosses midnight when To is earlier than From.
+type GapWindow struct {
+	Enabled bool   `json:"enabled"`
+	From    string `json:"from,omitempty"` // "HH:MM"
+	To      string `json:"to,omitempty"`
+}
+
+func clockMinutes(s string) (int, bool) {
+	var h, m int
+	if len(s) != 5 || s[2] != ':' {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// Validate checks an enabled window.
+func (g GapWindow) Validate() error {
+	if !g.Enabled {
+		return nil
+	}
+	f, ok1 := clockMinutes(g.From)
+	t, ok2 := clockMinutes(g.To)
+	if !ok1 || !ok2 {
+		return errors.New("a megengedett hiány kezdete és vége ÓÓ:PP formátumú legyen")
+	}
+	if f == t {
+		return errors.New("a megengedett hiány kezdete és vége nem lehet ugyanaz")
+	}
+	return nil
+}
+
+// Contains reports whether the wall-clock time of t (in its location) falls
+// into the window [From, To).
+func (g GapWindow) Contains(t time.Time) bool {
+	if !g.Enabled {
+		return false
+	}
+	f, ok1 := clockMinutes(g.From)
+	to, ok2 := clockMinutes(g.To)
+	if !ok1 || !ok2 || f == to {
+		return false
+	}
+	m := t.Hour()*60 + t.Minute()
+	if f < to {
+		return m >= f && m < to
+	}
+	return m >= f || m < to
+}
+
+// Describe prints the window, e.g. "naponta 00:30–06:15".
+func (g GapWindow) Describe() string {
+	if !g.Enabled {
+		return ""
+	}
+	return "naponta " + g.From + "–" + g.To
+}
+
 // SuspiciousRules flag files that arrived but look wrong.
 type SuspiciousRules struct {
 	ZeroBytes   bool  `json:"zeroBytes"`             // 0-byte file is suspicious
@@ -107,8 +172,10 @@ type Item struct {
 	GraceMinutes int `json:"graceMinutes"`
 	// EarlyMinutes: a file modified this much before the expected time
 	// still counts for it (but never before the previous expected time).
-	EarlyMinutes int             `json:"earlyMinutes"`
-	Suspicious   SuspiciousRules `json:"suspicious"`
+	EarlyMinutes int `json:"earlyMinutes"`
+	// Gap: daily window in which the file may be missing (see GapWindow).
+	Gap        GapWindow       `json:"gap"`
+	Suspicious SuspiciousRules `json:"suspicious"`
 
 	Enabled bool `json:"enabled"`
 	Notify  bool `json:"notify"`

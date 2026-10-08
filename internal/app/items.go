@@ -121,6 +121,9 @@ func (a *App) normalizeItem(it *model.Item) (warnings []string, err error) {
 	if it.Suspicious.MinBytes < 0 {
 		return nil, errors.New("a minimális méret nem lehet negatív")
 	}
+	if err := it.Gap.Validate(); err != nil {
+		return nil, err
+	}
 	return warnings, nil
 }
 
@@ -350,7 +353,7 @@ func (a *App) registerItemAPI() {
 		}
 		res := a.Checker.Check(it.Path, ref.In(a.Loc), it.Token == model.TokenAny)
 		out := status.Evaluate(status.Input{Now: time.Now(), Expected: exp, HasExpected: has, PrevExpected: prev,
-			Grace: it.Grace(), Early: it.Early(), Result: res, Rules: it.Suspicious, Loc: a.Loc})
+			Grace: it.Grace(), Early: it.Early(), Result: res, Rules: it.Suspicious, Gap: it.Gap, Loc: a.Loc})
 		tr := TestResult{Status: out.Status, Reason: out.Reason, Result: res, Warnings: warn, NormPath: it.Path}
 		if has {
 			tr.Expected = &exp

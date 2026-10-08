@@ -102,6 +102,7 @@ A lerakás időpontja a fájl **módosítási ideje** (LastWriteTime). A kérdé
 
 - **Korai érkezés elfogadása (perc):** ha a folyamat 05:50-re végez, de 06:00 az elvárt időpont, a 30 perces korai tolerancia miatt ez is jó. Biztonsági korlát: legfeljebb az előző elvárt időpont és a mostani közötti felezőpontig visszamenőleg fogad el fájlt, így egy fájl sosem „teljesít” két egymást követő elvárást.
 - **Türelmi idő (perc):** az elvárt időpont után ennyi ideig *Késik*, utána *Hiányzik*.
+- **Üres ablak (megengedett hiány):** riportonként megadható napi idősáv (tól–ig, átnyúlhat éjfélen), amikor a fájl hiánya nem hiba – pl. ha egy script előbb törli a régi fájlt, és csak később rakja le az újat. Ilyenkor az állapot *Várakozik* („üres ablak” címkével), értesítés nem jön; egy már nyitott problémát sem zár le „helyreállásként”. Az ablak vége után a szokásos szabályok érvényesek (türelmi idő, *Késik*, *Hiányzik*). Példa: törlés 00:30-kor, új fájl 06:00-ra → üres ablak 00:20–06:30.
 
 ---
 
@@ -134,7 +135,7 @@ Minden számítás magyar idő (Europe/Budapest) szerint történik.
 | Állapot | Jelentés | Tálcaikon |
 |---|---|---|
 | **OK** | a fájl az utolsó elvárt időpont után megérkezett | zöld |
-| **Várakozik** | még nem volt elvárt időpont | zöld |
+| **Várakozik** | még nem volt elvárt időpont, vagy a fájl az „üres ablakban” hiányzik | zöld |
 | **Késik** | még nem jött meg, de a türelmi időn belül vagyunk | sárga |
 | **Gyanús** | megérkezett, de 0 bájtos / a minimumnál kisebb / a szokásosnál drasztikusan kisebb (a legutóbbi érkezések mediánjához képest) / jövőbeli dátumú | sárga |
 | **Hiányzik** | a türelmi idő lejárt, nem jött meg | piros |
@@ -199,7 +200,7 @@ Közös módban a figyelt riportok listája **egy hálózati mappában** van (pl
 
 | Közös (a közös mappában) | Személyes (a saját gépen) |
 |---|---|
-| a riportok összes beállítása (útvonal, ütemezés, türelmi idő, gyanússági szabályok, csoport, felelős, megjegyzés), a figyelés be/ki kapcsolása | **kiről kér értesítést** (riportonként a részletpanelen, csoportonként a *Beállítások → Értesítések* alatt), csendes időszak, szünet, automatikus indulás, ablak, nyugtázás, előzmények |
+| a riportok összes beállítása (útvonal, ütemezés, türelmi idő, üres ablak, gyanússági szabályok, csoport, felelős, megjegyzés), a figyelés be/ki kapcsolása | **kiről kér értesítést** (riportonként a részletpanelen, csoportonként a *Beállítások → Értesítések* alatt), csendes időszak, szünet, automatikus indulás, ablak, nyugtázás, előzmények |
 
 **Szerkesztés és zárolás**
 - Amikor valaki megnyit egy riportot szerkesztésre, a riport a többiek számára **zárolt**. Náluk lakat ikon és „Szerkeszti: Kiss Anna (EF-PC12), 10:42 óta” felirat látszik. Megnézni lehet, szerkeszteni nem.

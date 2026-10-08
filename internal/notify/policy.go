@@ -163,6 +163,11 @@ func (p *Policy) OnTransition(ev engine.Event, s model.Settings, muted bool, now
 
 	switch ns.Status {
 	case model.StatusOK, model.StatusWaiting:
+		if ns.Gap {
+			// Inside the allowed gap window nothing is decided: an open
+			// problem stays open (no "recovered" message), none is raised.
+			return nil
+		}
 		if !hasInc {
 			delete(p.suppressed, id)
 			return nil

@@ -24,6 +24,8 @@ type Input struct {
 	Early        time.Duration
 	Result       checker.Result
 	Rules        model.SuspiciousRules
+	// Gap: daily window in which a missing/old file is not a problem.
+	Gap model.GapWindow
 	// RecentSizes are sizes of previous arrivals (newest first).
 	RecentSizes []int64
 	Loc         *time.Location
@@ -39,6 +41,8 @@ type Output struct {
 	Deadline time.Time
 	// Fresh reports whether the found file belongs to the current expectation.
 	Fresh bool
+	// Gap: the file is missing, but this is allowed right now (gap window).
+	Gap bool
 }
 
 // FutureSkew: modification times further in the future are suspicious.
@@ -117,6 +121,11 @@ func Evaluate(in Input) Output {
 		what = r.Reason
 	default:
 		what = "A fájl nem található."
+	}
+	if in.Gap.Contains(in.Now.In(loc)) {
+		out.Status, out.Gap = model.StatusWaiting, true
+		out.Reason = fmt.Sprintf("Üres ablak (%s): ilyenkor a fájl hiányozhat, %s után újra figyelem. %s", in.Gap.Describe(), in.Gap.To, what)
+		return out
 	}
 	if in.Now.Before(out.Deadline) {
 		out.Status = model.StatusLate

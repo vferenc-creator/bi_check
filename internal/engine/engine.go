@@ -40,6 +40,8 @@ type ItemState struct {
 	Checking      bool               `json:"checking"`
 	ScheduleText  string             `json:"scheduleText"`
 	ScheduleError string             `json:"scheduleError,omitempty"`
+	// Gap: missing, but inside the item's allowed gap window.
+	Gap bool `json:"gap,omitempty"`
 	// Acked: the user acknowledged the current problem (no more reminders
 	// until the next expected time).
 	Acked bool `json:"acked"`
@@ -152,11 +154,12 @@ type checkRelevant struct {
 	Grace    int
 	Early    int
 	Rules    model.SuspiciousRules
+	Gap      model.GapWindow
 	Enabled  bool
 }
 
 func relevant(it model.Item) checkRelevant {
-	return checkRelevant{it.Path, it.Token, it.Schedule, it.GraceMinutes, it.EarlyMinutes, it.Suspicious, it.Enabled}
+	return checkRelevant{it.Path, it.Token, it.Schedule, it.GraceMinutes, it.EarlyMinutes, it.Suspicious, it.Gap, it.Enabled}
 }
 
 // Configure replaces the item list and timing settings. States of unchanged
@@ -403,7 +406,7 @@ func (e *Engine) checkOne(en *entry) {
 	res := e.cfg.Checker.Check(item.Path, ref.In(e.cfg.Loc), item.Token == model.TokenAny)
 	out := status.Evaluate(status.Input{
 		Now: e.cfg.Now(), Expected: exp, HasExpected: hasExp, PrevExpected: prev,
-		Grace: item.Grace(), Early: item.Early(), Result: res, Rules: item.Suspicious,
+		Grace: item.Grace(), Early: item.Early(), Result: res, Rules: item.Suspicious, Gap: item.Gap,
 		RecentSizes: e.cfg.SizeHistory(item.ID), Loc: e.cfg.Loc,
 	})
 
@@ -416,6 +419,7 @@ func (e *Engine) checkOne(en *entry) {
 	ns.Deadline = out.Deadline
 	ns.WindowStart = out.WindowStart
 	ns.Fresh = out.Fresh
+	ns.Gap = out.Gap
 	ns.Matches = res.Matches
 	ns.Candidates = res.Candidates
 	ns.Resolved = res.Resolved

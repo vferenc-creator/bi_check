@@ -207,3 +207,23 @@ func TestRenderGrouping(t *testing.T) {
 		t.Fatalf("%+v", ts)
 	}
 }
+
+// Entering the allowed gap window is neither a recovery nor a problem.
+func TestGapWaitingKeepsIncident(t *testing.T) {
+	p := NewPolicy(nil)
+	s := settings()
+	s.Notifications.Quiet.Enabled = false
+	it := item("Riport")
+	exp := at("2026-10-08 06:00")
+	if n := p.OnTransition(ev(it, model.StatusLate, model.StatusMissing, exp), s, false, at("2026-10-08 06:31")); len(n) != 1 {
+		t.Fatalf("%+v", n)
+	}
+	gap := ev(it, model.StatusMissing, model.StatusWaiting, exp)
+	gap.New.Gap = true
+	if n := p.OnTransition(gap, s, false, at("2026-10-09 00:30")); len(n) != 0 {
+		t.Fatalf("gap must not report a recovery: %+v", n)
+	}
+	if n := p.OnTransition(ev(it, model.StatusWaiting, model.StatusOK, at("2026-10-09 06:00")), s, false, at("2026-10-09 06:05")); len(n) != 1 || n[0].Kind != KindRecovery {
+		t.Fatalf("real recovery expected: %+v", n)
+	}
+}

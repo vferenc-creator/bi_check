@@ -186,3 +186,47 @@ func TestWaiting(t *testing.T) {
 		t.Fatal(o.Status)
 	}
 }
+
+// A script deletes the file at 00:30 and writes the new one at ~06:05: with
+// a 00:20–06:30 gap window the night is "waiting", not "missing".
+func TestGapWindow(t *testing.T) {
+	gap := model.GapWindow{Enabled: true, From: "00:20", To: "06:30"}
+	run := func(now string, r checker.Result) Output {
+		s, _ := schedule.Compile(daily6, calendar.Default, bud)
+		n := at(now)
+		exp, ok := s.Prev(n)
+		prev, _ := s.PrevBefore(exp)
+		return Evaluate(Input{Now: n, Expected: exp, HasExpected: ok, PrevExpected: prev, Grace: 15 * time.Minute,
+			Result: r, Gap: gap, Loc: bud})
+	}
+	missing := checker.Result{Kind: checker.NotFound, Reason: "A fájl nem található."}
+	cases := []struct {
+		now  string
+		r    checker.Result
+		want model.Status
+		gap  bool
+	}{
+		{"2026-10-08 00:10", missing, model.StatusMissing, false}, // before the window: a real problem
+		{"2026-10-08 00:45", missing, model.StatusWaiting, true},  // deleted by the script
+		{"2026-10-08 06:10", missing, model.StatusWaiting, true},  // late, but still inside the window
+		{"2026-10-08 06:10", found("2026-10-08 06:05", 100), model.StatusOK, false},
+		{"2026-10-08 06:31", missing, model.StatusMissing, false}, // window over, deadline passed
+		{"2026-10-08 03:00", checker.Result{Kind: checker.Unreachable, Reason: "x"}, model.StatusUnreachable, false},
+	}
+	for _, c := range cases {
+		o := run(c.now, c.r)
+		if o.Status != c.want || o.Gap != c.gap {
+			t.Errorf("%s: %s gap=%v (%s), want %s gap=%v", c.now, o.Status, o.Gap, o.Reason, c.want, c.gap)
+		}
+	}
+	// The window may cross midnight.
+	night := model.GapWindow{Enabled: true, From: "23:00", To: "02:00"}
+	for s, want := range map[string]bool{"2026-10-08 22:59": false, "2026-10-08 23:00": true, "2026-10-09 01:59": true, "2026-10-09 02:00": false} {
+		if night.Contains(at(s)) != want {
+			t.Errorf("Contains(%s) != %v", s, want)
+		}
+	}
+	if (model.GapWindow{Enabled: true, From: "25:00", To: "01:00"}).Validate() == nil || (model.GapWindow{Enabled: true, From: "01:00", To: "01:00"}).Validate() == nil {
+		t.Error("invalid windows accepted")
+	}
+}

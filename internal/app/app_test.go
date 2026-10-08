@@ -113,7 +113,7 @@ func TestPreviewAndTestPath(t *testing.T) {
 	if pv.Error == "" {
 		t.Fatal("expected error")
 	}
-	f := filepath.Join(dir, "r_"+time.Now().Format("20060102")+".csv")
+	f := filepath.Join(dir, "r_"+time.Now().In(a.Loc).Format("20060102")+".csv") // the app evaluates in its own time zone
 	os.WriteFile(f, []byte("abc"), 0o644)
 	it := model.NewItem()
 	it.Name = "R"
