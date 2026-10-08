@@ -46,6 +46,8 @@ jobs:
           Write-Host "Version: $v"
       - name: Unit tests (Windows time zone database & file system)
         run: go test ./...
+      - name: Shared-mode concurrency tests, repeated (catch rare races on NTFS)
+        run: go test -count=10 ./internal/teamstore
       - name: Build
         shell: pwsh
         run: ./build.ps1 -Version ${{ steps.ver.outputs.version }}
