@@ -51,6 +51,9 @@ type App struct {
 	pushPending bool
 	lastTray    string
 
+	shared  map[string]*sharedState // loaded shared team lists
+	memMeta map[string]string       // meta storage when the history DB is unavailable
+
 	// OnCall, if set, is invoked before every RPC (used by --selftest).
 	OnCall func(method string)
 }
@@ -77,7 +80,7 @@ func New(p Platform, opt Options) (*App, error) {
 	if loc == nil {
 		loc = loadBudapest()
 	}
-	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}, stop: make(chan struct{})}
+	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}, stop: make(chan struct{}), memMeta: map[string]string{}, shared: map[string]*sharedState{}}
 	if opt.HistoryPath != "" {
 		h, err := store.OpenHistory(opt.HistoryPath)
 		if err != nil {
@@ -110,6 +113,8 @@ func New(p Platform, opt Options) (*App, error) {
 	a.registerItemAPI()
 	a.registerHistoryAPI()
 	a.registerTransferAPI()
+	a.registerEmailAPI()
+	a.registerTeamAPI()
 	return a, nil
 }
 
@@ -126,6 +131,12 @@ func (a *App) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.reconfigure()
+	go func() {
+		// Shared lists live on network shares: load them in the background.
+		if a.refreshShared(true) {
+			a.reconfigure()
+		}
+	}()
 	go a.Engine.Run(ctx)
 	go a.background(a.stop)
 }
@@ -157,11 +168,6 @@ func (a *App) reconfigure() {
 	a.mu.Unlock()
 	a.Checker.SetTimeout(time.Duration(s.TimeoutSec) * time.Second)
 	a.Engine.Configure(a.effectiveItems(s), cal, time.Duration(s.CheckIntervalSec)*time.Second, s.Parallelism)
-}
-
-// effectiveItems are the personal items (shared lists are merged in later phases).
-func (a *App) effectiveItems(s model.Settings) []model.Item {
-	return s.Items
 }
 
 // Calendar returns the working-day calendar in use.

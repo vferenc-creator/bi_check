@@ -99,12 +99,12 @@ func (a *App) background(stop <-chan struct{}) {
 	var up *store.Uptime
 	if a.History != nil {
 		up = a.History.StartUptime(time.Now())
-		s := a.Settings.Get()
-		_ = a.History.Prune(time.Now().AddDate(0, 0, -s.HistoryDays), itemIDs(a.effectiveItems(s)))
 	}
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
-	lastPrune := time.Now()
+	// First prune ~1 hour after start: by then shared lists are loaded, so
+	// their incidents are not mistaken for deleted items.
+	lastPrune := time.Now().Add(-5 * time.Hour)
 	for {
 		select {
 		case <-stop:
@@ -122,6 +122,9 @@ func (a *App) background(stop <-chan struct{}) {
 				a.queueNotices(ns)
 			}
 			a.maybeDailySummary(s, now.In(a.Loc))
+			if a.refreshShared(false) {
+				a.reconfigure()
+			}
 			if a.History != nil && now.Sub(lastPrune) > 6*time.Hour {
 				lastPrune = now
 				_ = a.History.Prune(now.AddDate(0, 0, -s.HistoryDays), itemIDs(a.effectiveItems(s)))

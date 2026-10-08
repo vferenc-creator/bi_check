@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 	"bimonitor/internal/schedule"
 )
@@ -181,4 +182,102 @@ func TestImportMerge(t *testing.T) {
 	if len(items) != 2 || items[0].Name != "A frissítve" {
 		t.Fatalf("%+v", items)
 	}
+}
+
+func TestSharedList(t *testing.T) {
+	a, _, dir := newTestApp(t)
+	it := model.NewItem()
+	it.Name = "Csapat export"
+	it.Path = filepath.Join(dir, "team.csv")
+	doc := ExportFile{Format: ExportFormat, Version: 1, Items: []model.Item{it}}
+	b, _ := json.Marshal(doc)
+	listPath := filepath.Join(dir, "csapat.json")
+	os.WriteFile(listPath, b, 0o644)
+
+	st := call[[]SharedStatus](t, a, "saveSharedLists", []model.SharedList{{Name: "BI csapat", Path: listPath, Enabled: true}})
+	if len(st) != 1 || st[0].Count != 1 || st[0].Error != "" {
+		t.Fatalf("%+v", st)
+	}
+	snap := call[Snapshot](t, a, "listItems", nil)
+	if len(snap.Items) != 1 || snap.Items[0].Item.Source != "BI csapat" || !strings.HasPrefix(snap.Items[0].Item.ID, sharedPrefix) {
+		t.Fatalf("%+v", snap.Items)
+	}
+	id := snap.Items[0].Item.ID
+	// Shared items cannot be edited or deleted, but can be switched off locally.
+	sh := snap.Items[0].Item
+	sb, _ := json.Marshal(sh)
+	if _, err := a.Call("saveItem", sb); err == nil {
+		t.Fatal("editing a shared item must fail")
+	}
+	v := call[ItemView](t, a, "setEnabled", map[string]any{"id": id, "enabled": false})
+	if v.Item.Enabled || v.State.Status != model.StatusDisabled {
+		t.Fatalf("override: %+v", v)
+	}
+	// File changes are picked up.
+	it2 := model.NewItem()
+	it2.Name = "Második"
+	it2.Path = filepath.Join(dir, "b.csv")
+	doc.Items = append(doc.Items, it2)
+	b, _ = json.Marshal(doc)
+	os.WriteFile(listPath, b, 0o644)
+	future := time.Now().Add(time.Minute)
+	os.Chtimes(listPath, future, future)
+	st = call[[]SharedStatus](t, a, "reloadSharedLists", nil)
+	if st[0].Count != 2 {
+		t.Fatalf("reload: %+v", st)
+	}
+	// Broken file: keep the last good items, report the error.
+	os.WriteFile(listPath, []byte("{broken"), 0o644)
+	os.Chtimes(listPath, future.Add(time.Minute), future.Add(time.Minute))
+	st = call[[]SharedStatus](t, a, "reloadSharedLists", nil)
+	if st[0].Error == "" || st[0].Count != 2 {
+		t.Fatalf("broken: %+v", st)
+	}
+}
+
+func TestCalendarAPI(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	cv := call[CalendarView](t, a, "getCalendar", 2026)
+	if len(cv.Days) < 13 {
+		t.Fatal(cv)
+	}
+	if _, err := a.Call("saveCalendar", json.RawMessage(`{"restDays":["2026-13-40"]}`)); err == nil {
+		t.Fatal("invalid date accepted")
+	}
+	if _, err := a.Call("saveCalendar", json.RawMessage(`{"restDays":["2026-10-09"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if a.Calendar().IsWorkday(mustDate("2026-10-09")) {
+		t.Fatal("override not applied")
+	}
+}
+
+func TestEmailPasswordIsProtected(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	pw := "titok"
+	s := call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "smtp.ef.local", Port: 25, From: "bi@energofish.hu", To: []string{"a@x.hu; b@x.hu"}}, NewPassword: &pw, Summary: model.DailySummary{Time: "07:30"}})
+	if s.Email.PasswordEnc != "********" || len(s.Email.To) != 2 {
+		t.Fatalf("redacted/split: %+v", s.Email)
+	}
+	raw := a.Settings.Get().Email.PasswordEnc
+	if raw == "" || strings.Contains(raw, pw) {
+		t.Fatal("password must be stored encoded")
+	}
+	cfg, err := a.mailConfig(a.Settings.Get())
+	if err != nil || cfg.Password != pw {
+		t.Fatal(err, cfg.Password)
+	}
+	// Saving without a new password keeps the old one.
+	call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "h"}, Summary: model.DailySummary{Time: "07:30"}})
+	if a.Settings.Get().Email.PasswordEnc != raw {
+		t.Fatal("password lost")
+	}
+}
+
+func mustDate(s string) calendar.Date {
+	d, err := calendar.ParseDate(s)
+	if err != nil {
+		panic(err)
+	}
+	return d
 }

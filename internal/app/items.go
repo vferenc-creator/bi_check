@@ -235,6 +235,10 @@ func (a *App) registerItemAPI() {
 	})
 
 	a.register("setEnabled", func(p enableParam) (ItemView, error) {
+		if strings.HasPrefix(p.ID, sharedPrefix) {
+			err := a.setOverride(p.ID, func(ov *model.ItemOverride) { ov.Disabled = !p.Enabled })
+			return a.view(p.ID), err
+		}
 		_, err := a.Settings.Update(func(s *model.Settings) error {
 			for i := range s.Items {
 				if s.Items[i].ID == p.ID {

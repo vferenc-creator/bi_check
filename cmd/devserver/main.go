@@ -169,6 +169,10 @@ func seedHistory(a *app.App) {
 			continue
 		}
 		size := int64(1_000_000 + rnd.Intn(4_000_000))
+		if r := a.Checker.Check(it.Path, now, it.Token == model.TokenAny); r.File != nil && r.File.Size > 0 {
+			size = r.File.Size // make the fake history resemble the real file
+		}
+		base := size
 		for _, t := range sc.Between(from, now.Add(-time.Hour), 2000) {
 			r := rnd.Float64()
 			if r < 0.04 {
@@ -181,7 +185,7 @@ func seedHistory(a *app.App) {
 				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(it.Grace()), From: "late", To: "missing", Reason: "Nem érkezett meg (határidő lejárt).", Expected: &t})
 				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(delay), From: "missing", To: "ok", Reason: "Megérkezett késéssel.", Expected: &t})
 			}
-			size += int64(rnd.Intn(60_000)) - 25_000
+			size = base + int64(rnd.Intn(int(base/50+1))) - base/100
 			d := int64(delay / time.Second)
 			tt := t
 			_, _ = a.History.RecordArrival(store.Arrival{ItemID: it.ID, FilePath: it.Path, ModTime: t.Add(delay), Size: size, Expected: &tt, DelaySec: &d, SeenAt: t.Add(delay)})

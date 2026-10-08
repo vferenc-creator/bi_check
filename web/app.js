@@ -142,6 +142,7 @@ function fmtDateTime(s, withSec) {
   if (diff === 0) return "ma " + time;
   if (diff === -1) return "tegnap " + time;
   if (diff === 1) return "holnap " + time;
+  if (d.getFullYear() === now.getFullYear()) return pad(d.getMonth() + 1) + "." + pad(d.getDate()) + ". " + time;
   return d.getFullYear() + "." + pad(d.getMonth() + 1) + "." + pad(d.getDate()) + ". " + time;
 }
 function fmtFull(s) {
@@ -348,7 +349,7 @@ views.items = main => {
   main.append(h("table", { class: "table" },
     h("colgroup", {}, ["c-status", "c-name", "c-path", "c-sched", "c-when", "c-when", "c-acts"].map(c => h("col", { class: c }))),
     h("thead", {}, h("tr", {}, th("status", "Állapot"), th("name", "Név"), th(null, "Útvonal", "nosort"), th(null, "Ütemezés", "nosort"),
-      th("modified", "Utolsó módosítás"), th("next", "Következő elvárt"), th(null, "", "nosort"))),
+      th("modified", "Módosítva"), th("next", "Következő"), th(null, "", "nosort"))),
     tbody));
 };
 
@@ -362,7 +363,7 @@ function itemRow(r) {
     h("td", {}, st.checking ? h("span", { class: "pill st-unknown" }, icon("refresh", "spin"), "Ellenőrzés…") : pill(st.status), st.acked ? h("span", { class: "group-tag", title: "Nyugtázva" }, "nyugtázva") : null),
     h("td", {}, h("span", { class: "name" }, it.name), it.group ? h("span", { class: "group-tag" }, it.group) : null,
       it.source ? h("span", { class: "shared-tag", title: "Közös listából: " + it.source }, "közös") : null,
-      !it.notify ? icon("bellOff", "mute-ic") : null,
+      !it.notify || ((S.settings && S.settings.overrides || {})[it.id] || {}).mute ? icon("bellOff", "mute-ic") : null,
       it.owner ? h("div", { class: "small muted" }, it.owner) : null),
     h("td", {}, h("div", { class: "path", title: st.file ? st.file.path : it.path }, "‎" + (st.file ? st.file.path : (st.resolved || it.path)))),
     h("td", { class: "small" }, st.scheduleText || ""),
@@ -398,8 +399,11 @@ function itemMenu(anchor, r) {
   const shared = !!it.source;
   showMenu(anchor, [
     !shared && { label: "Szerkesztés", icon: "edit", run: () => openEditor(it) },
-    { label: "Duplikálás", icon: "copy", run: () => duplicateItem(it.id) },
-    !shared && { label: it.enabled ? "Kikapcsolás" : "Bekapcsolás", icon: "power", run: () => setEnabled(it.id, !it.enabled) },
+    !shared && { label: "Duplikálás", icon: "copy", run: () => duplicateItem(it.id) },
+    { label: it.enabled ? (shared ? "Kikapcsolás nálam" : "Kikapcsolás") : "Bekapcsolás", icon: "power", run: () => setEnabled(it.id, !it.enabled) },
+    shared && { label: (S.settings.overrides || {})[it.id] && S.settings.overrides[it.id].mute ? "Értesítések visszakapcsolása" : "Némítás nálam", icon: "bellOff",
+      run: () => setOverride(it.id, { mute: !((S.settings.overrides || {})[it.id] || {}).mute }).then(async () => { S.settings = (await api("bootstrap")).settings; }) },
+    shared && { label: "Másolás a saját listába", icon: "copy", run: () => duplicateItem(it.id) },
     typeof ackItem === "function" && r.state.status && ["missing", "unreachable", "suspicious", "late"].includes(r.state.status) && !r.state.acked
       ? { label: "Nyugtázás (ne szóljon újra)", icon: "ack", run: () => ackItem(it.id, true) } : null,
     null,
@@ -792,7 +796,8 @@ async function openEditor(item) {
             field("Minimális méret (KB)", h("input", { class: "input narrow", type: "number", min: 0, value: minKB.v, oninput: e => { sus.minBytes = (parseInt(e.target.value, 10) || 0) * 1024; } })),
             field("Méretcsökkenés küszöb (%)", number(sus, "dropPercent", { min: 0, max: 99 }), "a szokásos mérethez képest; 0 = ki"))),
         h("fieldset", {}, h("legend", {}, "Működés"),
-          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", "Értesítés erről az elemről"))),
+          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", "Értesítés erről az elemről")),
+          h("div", { style: { marginTop: "12px" } }, field("További e-mail címzettek", text(it, "emailTo", { placeholder: "pl. felelos@energofish.hu (csak erről az elemről kap levelet)" }), "Az SMTP beállítások bekapcsolása esetén."))),
         errBox,
       ),
       h("div", { class: "side" }, preview,
@@ -972,6 +977,7 @@ async function importItems() {
 // ---- Settings view -------------------------------------------------------
 views.settings = main => {
   const s = JSON.parse(JSON.stringify(S.settings));
+  S.settingsDraft = s;
   main.append(h("div", { class: "page-head" }, h("h1", {}, "Beállítások"), h("div", { class: "grow" }),
     h("button", { class: "btn primary", onclick: save }, icon("check"), "Mentés")));
   const grid = h("div", { class: "settings-grid" });
@@ -1007,15 +1013,148 @@ views.settings = main => {
       row("Próbaértesítés", "Megjelenít egy minta értesítést.", h("button", { class: "btn sm", onclick: () => api("testNotification").catch(fail) }, icon("bell"), "Küldés")),
     )));
 
+  settingsExtra(grid, s, row, sw, num, timeIn);
+
   async function save() {
-    try {
-      S.settings = await api("saveSettings", s);
-      applyTheme();
-      toast("Beállítások mentve.");
-      render();
-    } catch (e) { fail(e); }
+    try { await saveAll(); render(); } catch (e) { fail(e); }
   }
 };
+
+// ---- Settings: e-mail, daily summary, calendar, shared lists, data (phase 4)
+function settingsExtra(grid, s, row, sw, num, timeIn) {
+  const e = s.email, ds = s.dailySummary;
+  S.emailDraft = { email: e, summary: ds, newPassword: null };
+  const inp = (obj, key, attrs) => h("input", Object.assign({ class: "input", value: obj[key] || "", oninput: ev => { obj[key] = ev.target.value; } }, attrs || {}));
+  const pw = h("input", { class: "input", type: "password", placeholder: e.passwordEnc ? "•••••• (tárolva – üresen hagyva nem változik)" : "", oninput: ev => { S.emailDraft.newPassword = ev.target.value; } });
+  const toArea = h("textarea", { class: "input", rows: 2, placeholder: "bi-csapat@energofish.hu; kontrolling@energofish.hu", oninput: ev => { e.to = [ev.target.value]; } }, (e.to || []).join("; "));
+  grid.append(h("div", { class: "card" },
+    h("div", { class: "card-h" }, icon("mail"), h("h3", {}, "E-mail értesítés (SMTP)")),
+    h("div", { class: "card-b" },
+      row("E-mail küldése", "Hibákról e-mail a megadott címekre (a csendes időszak az e-mailekre nem vonatkozik).", sw(e, "enabled")),
+      h("div", { class: "grid2", style: { margin: "10px 0" } },
+        h("label", { class: "field" }, "SMTP szerver", inp(e, "host", { placeholder: "pl. mail.ef.local" })),
+        h("div", { class: "row" },
+          h("label", { class: "field" }, "Port", h("input", { class: "input narrow", type: "number", value: e.port, oninput: ev => { e.port = parseInt(ev.target.value, 10) || 25; } })),
+          h("label", { class: "field grow" }, "Titkosítás", h("select", { class: "input", onchange: ev => { e.security = ev.target.value; } },
+            [["starttls", "STARTTLS"], ["tls", "TLS (465)"], ["none", "nincs"]].map(([v, l]) => h("option", { value: v, selected: e.security === v }, l))))),
+        h("label", { class: "field" }, "Felhasználónév", inp(e, "username", { placeholder: "üres = nincs hitelesítés" })),
+        h("label", { class: "field" }, "Jelszó", pw, h("span", { class: "hint" }, "Windows DPAPI-val titkosítva tárolódik.")),
+        h("label", { class: "field" }, "Feladó", inp(e, "from", { placeholder: "bi-monitor@energofish.hu" })),
+        h("label", { class: "field" }, "Címzettek", toArea)),
+      row("Új problémákról", null, sw(e, "onProblems")),
+      row("Helyreállásról", null, sw(e, "onRecovery")),
+      row("Próbaüzenet", "Mentés után küld egy teszt e-mailt.", h("button", { class: "btn sm", onclick: async () => {
+        try { await saveAll(true); await api("sendTestEmail"); toast("Próbaüzenet elküldve."); } catch (err) { fail(err); }
+      } }, icon("mail"), "Küldés")),
+    )));
+
+  grid.append(h("div", { class: "card" },
+    h("div", { class: "card-h" }, icon("calendar"), h("h3", {}, "Napi összefoglaló")),
+    h("div", { class: "card-b" },
+      row("Napi összefoglaló", "Minden nap egyszer, a megadott időpont után.", sw(ds, "enabled")),
+      row("Időpont", null, timeIn(ds, "time")),
+      row("Csak munkanapokon", null, sw(ds, "workdaysOnly")),
+      row("Windows értesítésként", null, sw(ds, "toast")),
+      row("E-mailben (HTML táblázat)", "Az SMTP beállításokat használja.", sw(ds, "email")),
+      row("Csak ha van probléma", "Ha minden rendben, nem küld semmit.", sw(ds, "onlyProblems")),
+      row("Küldés most", null, h("button", { class: "btn sm", onclick: async () => { try { await saveAll(true); await api("sendSummaryNow"); toast("Összefoglaló elküldve."); } catch (err) { fail(err); } } }, icon("bell"), "Küldés")),
+    )));
+
+  const calCard = h("div", { class: "card" });
+  grid.append(calCard);
+  drawCalendar(calCard, new Date().getFullYear());
+
+  const shCard = h("div", { class: "card" });
+  grid.append(shCard);
+  drawShared(shCard);
+
+  grid.append(h("div", { class: "card" },
+    h("div", { class: "card-h" }, icon("folder"), h("h3", {}, "Adatok")),
+    h("div", { class: "card-b" },
+      row("Figyelt elemek importálása", "JSON vagy CSV fájlból (előnézettel).", h("button", { class: "btn sm", onclick: importItems }, icon("upload"), "Import")),
+      row("Figyelt elemek exportálása", "JSON: megosztáshoz / közös listához. CSV: Excelhez.", h("div", { class: "row" },
+        h("button", { class: "btn sm", onclick: () => exportItems("json") }, "JSON"), h("button", { class: "btn sm", onclick: () => exportItems("csv") }, "CSV"))),
+      row("Adatmappa", S.boot.settingsPath, h("button", { class: "btn sm", onclick: () => api("openDataFolder").catch(fail) }, icon("folder"), "Megnyitás")),
+    )));
+}
+
+async function saveAll(silent) {
+  const s = S.settingsDraft;
+  S.settings = await api("saveSettings", s);
+  S.settings = await api("saveEmail", { email: S.emailDraft.email, summary: S.emailDraft.summary, newPassword: S.emailDraft.newPassword || null });
+  S.emailDraft.newPassword = null;
+  applyTheme();
+  if (!silent) toast("Beállítások mentve.");
+}
+
+async function drawCalendar(card, year) {
+  let cv;
+  try { cv = await api("getCalendar", year); } catch (e) { return fail(e); }
+  const o = cv.overrides || {};
+  o.restDays = o.restDays || []; o.workDays = o.workDays || []; o.ignore = o.ignore || [];
+  const save = async () => { try { await api("saveCalendar", o); drawCalendar(card, year); toast("Munkanaptár mentve."); } catch (e) { fail(e); } };
+  const kindLabel = { holiday: "munkaszüneti nap", rest: "pihenőnap", work: "munkanap" };
+  const kindColor = { holiday: "var(--missing)", rest: "var(--late)", work: "var(--ok)" };
+  const wd = ["V", "H", "K", "Sze", "Cs", "P", "Szo"];
+  const list = h("div", { class: "cal-list" });
+  for (const d of cv.days) {
+    const custom = o.restDays.includes(d.date) || o.workDays.includes(d.date);
+    list.append(h("div", { class: "cal-row" },
+      h("span", { class: "d" }, d.date), h("span", { class: "muted", style: { width: "28px" } }, wd[new Date(d.date + "T12:00").getDay()]),
+      h("span", { class: "k", style: { color: kindColor[d.kind], fontWeight: 600 } }, kindLabel[d.kind]),
+      h("span", { class: "grow" }, d.name),
+      custom ? h("button", { class: "btn sm ghost", onclick: () => { o.restDays = o.restDays.filter(x => x !== d.date); o.workDays = o.workDays.filter(x => x !== d.date); save(); } }, "törlés")
+        : h("button", { class: "btn sm ghost", title: "Figyelmen kívül hagyás (ha a beépített adat hibás)", onclick: () => { o.ignore.push(d.date); save(); } }, "kihagyás")));
+  }
+  const dIn = h("input", { class: "input", type: "date" });
+  const kSel = h("select", { class: "input" }, h("option", { value: "rest" }, "pihenőnap"), h("option", { value: "work" }, "munkanap (pl. szombat)"));
+  clear(card).append(
+    h("div", { class: "card-h" }, icon("calendar"), h("h3", {}, "Munkanaptár"), h("div", { class: "grow" }),
+      h("select", { class: "input", style: { height: "30px" }, onchange: e => drawCalendar(card, parseInt(e.target.value, 10)) },
+        [year - 1, year, year + 1].map(y => h("option", { value: y, selected: y === cv.year }, y)))),
+    h("div", { class: "card-b" },
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "Beépítve: az ünnepnapok minden évre, az áthelyezett munkanapok " + cv.knownYears.join(", ") + "-ra/re. Az áthelyezéseket évente (az NGM-rendelet megjelenése után) itt kell felvenni vagy javítani."),
+      list,
+      h("div", { class: "row", style: { marginTop: "10px" } }, dIn, kSel, h("button", { class: "btn sm", onclick: () => {
+        if (!dIn.value) return;
+        (kSel.value === "rest" ? o.restDays : o.workDays).push(dIn.value);
+        save();
+      } }, icon("plus"), "Hozzáadás")),
+      o.ignore.length ? h("div", { class: "small muted", style: { marginTop: "8px" } }, "Figyelmen kívül hagyott beépített napok: ", o.ignore.join(", "), " ",
+        h("button", { class: "btn sm ghost", onclick: () => { o.ignore = []; save(); } }, "visszaállítás")) : null));
+}
+
+async function drawShared(card) {
+  let lists;
+  try { lists = await api("sharedLists"); } catch (e) { return fail(e); }
+  const draft = lists.map(l => ({ id: l.id, name: l.name, path: l.path, enabled: l.enabled }));
+  const save = async () => { try { await api("saveSharedLists", draft); await refresh(); drawShared(card); toast("Közös listák mentve."); } catch (e) { fail(e); } };
+  const rows = h("div", { class: "col" });
+  lists.forEach((l, i) => {
+    rows.append(h("div", { class: "setting-row" },
+      h("div", { class: "lbl" }, h("b", {}, l.name), h("span", { class: "mono" }, l.path),
+        h("span", { style: { display: "block", color: l.error ? "var(--missing)" : "" } }, l.error ? "Hiba: " + l.error : (l.enabled ? l.count + " elem · betöltve: " + fmtDateTime(l.loadedAt) + (parseT(l.modTime) ? " · fájl: " + fmtDateTime(l.modTime) : "") : "kikapcsolva"))),
+      h("label", { class: "switch" }, h("input", { type: "checkbox", checked: l.enabled, onchange: e => { draft[i].enabled = e.target.checked; save(); } })),
+      h("button", { class: "btn sm ghost danger", onclick: () => { draft.splice(i, 1); save(); } }, icon("trash"))));
+  });
+  const name = h("input", { class: "input", placeholder: "Név, pl. BI csapat" });
+  const path = h("input", { class: "input mono grow", placeholder: "\\\\EFS-FSRHQ\\Groups\\BI\\monitor\\csapat.json" });
+  clear(card).append(
+    h("div", { class: "card-h" }, icon("users"), h("h3", {}, "Közös listák (csapat)"), h("div", { class: "grow" }),
+      lists.length ? h("button", { class: "btn sm", onclick: async () => { try { await api("reloadSharedLists"); await refresh(); drawShared(card); } catch (e) { fail(e); } } }, icon("refresh"), "Újratöltés") : null),
+    h("div", { class: "card-b" },
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "Egy hálózati meghajtón lévő JSON lista, amit mindenki figyel. A karbantartó a saját elemeit „Exportálás JSON-ba” funkcióval menti erre az útvonalra; a többiek itt feliratkoznak. A közös elemeket helyben némítani vagy kikapcsolni lehet, szerkeszteni nem."),
+      rows,
+      h("div", { class: "col", style: { marginTop: "10px" } }, name,
+        h("div", { class: "row" }, path,
+          h("button", { class: "btn sm", onclick: async () => { const r = await api("browseJSON").catch(fail); if (r && r.path) path.value = r.path; } }, icon("folder"), "Tallózás")),
+        h("div", {}, h("button", { class: "btn sm primary", onclick: () => { if (!path.value.trim()) return; draft.push({ name: name.value, path: path.value, enabled: true }); save(); } }, icon("plus"), "Feliratkozás")))));
+}
+
+async function setOverride(id, patch) {
+  try { await api("setOverride", Object.assign({ id }, patch)); await refresh(); } catch (e) { fail(e); }
+}
+bridge.on("toast", m => toast(m.text, m.error));
 
 // ---- About view ------------------------------------------------------------
 views.about = main => {
