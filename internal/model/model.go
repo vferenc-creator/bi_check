@@ -111,6 +111,9 @@ type Item struct {
 	// Source is set at runtime for items coming from a shared team list
 	// (never persisted in the personal list).
 	Source string `json:"source,omitempty"`
+	// Rev is set at runtime in shared mode: the revision of the report file
+	// the UI is editing (optimistic concurrency).
+	Rev int `json:"rev,omitempty"`
 }
 
 // IsPattern reports whether the path contains wildcards or date tokens.
