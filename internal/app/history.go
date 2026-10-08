@@ -94,7 +94,7 @@ func (a *App) flushNotices() {
 }
 
 // background runs periodic housekeeping: quiet-hour summaries, uptime
-// heartbeat, pruning and the daily summary.
+// heartbeat and pruning.
 func (a *App) background(stop <-chan struct{}) {
 	var up *store.Uptime
 	if a.History != nil {
@@ -121,7 +121,6 @@ func (a *App) background(stop <-chan struct{}) {
 			if ns := a.policy.Tick(s, now.In(a.Loc), states, names); len(ns) > 0 {
 				a.queueNotices(ns)
 			}
-			a.maybeDailySummary(s, now.In(a.Loc))
 			if a.refreshShared(false) {
 				a.reconfigure()
 			}

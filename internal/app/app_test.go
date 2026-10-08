@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 	"bimonitor/internal/schedule"
 )
@@ -235,27 +234,10 @@ func TestSharedList(t *testing.T) {
 	}
 }
 
-func TestCalendarAPI(t *testing.T) {
-	a, _, _ := newTestApp(t)
-	cv := call[CalendarView](t, a, "getCalendar", 2026)
-	if len(cv.Days) < 13 {
-		t.Fatal(cv)
-	}
-	if _, err := a.Call("saveCalendar", json.RawMessage(`{"restDays":["2026-13-40"]}`)); err == nil {
-		t.Fatal("invalid date accepted")
-	}
-	if _, err := a.Call("saveCalendar", json.RawMessage(`{"restDays":["2026-10-09"]}`)); err != nil {
-		t.Fatal(err)
-	}
-	if a.Calendar().IsWorkday(mustDate("2026-10-09")) {
-		t.Fatal("override not applied")
-	}
-}
-
 func TestEmailPasswordIsProtected(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	pw := "titok"
-	s := call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "smtp.ef.local", Port: 25, From: "bi@energofish.hu", To: []string{"a@x.hu; b@x.hu"}}, NewPassword: &pw, Summary: model.DailySummary{Time: "07:30"}})
+	s := call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "smtp.ef.local", Port: 25, From: "bi@energofish.hu", To: []string{"a@x.hu; b@x.hu"}}, NewPassword: &pw})
 	if s.Email.PasswordEnc != "********" || len(s.Email.To) != 2 {
 		t.Fatalf("redacted/split: %+v", s.Email)
 	}
@@ -268,18 +250,10 @@ func TestEmailPasswordIsProtected(t *testing.T) {
 		t.Fatal(err, cfg.Password)
 	}
 	// Saving without a new password keeps the old one.
-	call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "h"}, Summary: model.DailySummary{Time: "07:30"}})
+	call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "h"}})
 	if a.Settings.Get().Email.PasswordEnc != raw {
 		t.Fatal("password lost")
 	}
-}
-
-func mustDate(s string) calendar.Date {
-	d, err := calendar.ParseDate(s)
-	if err != nil {
-		panic(err)
-	}
-	return d
 }
 
 // The sample list attached to every release must stay importable.

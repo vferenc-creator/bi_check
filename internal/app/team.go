@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 	"bimonitor/internal/pathpattern"
 )
@@ -195,15 +194,6 @@ func (a *App) setOverride(id string, fn func(*model.ItemOverride)) error {
 	return err
 }
 
-// CalendarView is returned by getCalendar.
-type CalendarView struct {
-	Year       int                `json:"year"`
-	Days       []calendar.Day     `json:"days"`
-	Overrides  calendar.Overrides `json:"overrides"`
-	KnownYears []int              `json:"knownYears"`
-	Shared     bool               `json:"shared"` // stored in the shared folder
-}
-
 func (a *App) registerTeamAPI() {
 	a.register("sharedLists", func() ([]SharedStatus, error) { return a.sharedStatuses(), nil })
 
@@ -291,36 +281,5 @@ func (a *App) registerTeamAPI() {
 				ov.Mute = *p.Mute
 			}
 		})
-	})
-
-	a.register("getCalendar", func(year int) (CalendarView, error) {
-		if year == 0 {
-			year = time.Now().Year()
-		}
-		s := a.Settings.Get()
-		return CalendarView{Year: year, Days: a.Calendar().Year(year), Overrides: a.calendarOverrides(s), KnownYears: calendar.KnownTransferYears(), Shared: a.teamStore() != nil}, nil
-	})
-
-	a.register("saveCalendar", func(o calendar.Overrides) error {
-		for _, l := range [][]string{o.RestDays, o.WorkDays, o.Ignore} {
-			for _, d := range l {
-				if _, err := calendar.ParseDate(d); err != nil {
-					return err
-				}
-			}
-		}
-		if ts := a.teamStore(); ts != nil {
-			_, rev, _ := ts.Calendar()
-			if err := ts.SaveCalendar(o, rev); err != nil {
-				return teamErr(err)
-			}
-			a.reconfigure()
-			return nil
-		}
-		if _, err := a.Settings.Update(func(s *model.Settings) error { s.Calendar = o; return nil }); err != nil {
-			return err
-		}
-		a.reconfigure()
-		return nil
 	})
 }

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 	"bimonitor/internal/schedule"
 )
@@ -507,27 +506,6 @@ func TestForceUnlockIsLogged(t *testing.T) {
 	}
 	if _, err := a.Save(r.Definition, -1); err != ErrNotLocked {
 		t.Fatal("anna lost the lock")
-	}
-}
-
-func TestSharedCalendar(t *testing.T) {
-	_, a, b, _, _ := newShared(t)
-	if _, _, ok := b.Calendar(); ok {
-		t.Fatal("no calendar yet")
-	}
-	if err := a.SaveCalendar(calendar.Overrides{RestDays: []string{"2026-10-09"}}, 0); err != nil {
-		t.Fatal(err)
-	}
-	b.Sync()
-	o, rev, ok := b.Calendar()
-	if !ok || rev != 1 || len(o.RestDays) != 1 {
-		t.Fatalf("%+v %d %v", o, rev, ok)
-	}
-	if err := b.SaveCalendar(calendar.Overrides{}, 0); err == nil {
-		t.Fatal("stale calendar revision must be refused")
-	}
-	if err := b.SaveCalendar(calendar.Overrides{WorkDays: []string{"2026-10-17"}}, rev); err != nil {
-		t.Fatal(err)
 	}
 }
 

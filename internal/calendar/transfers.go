@@ -8,8 +8,7 @@ type transfer struct {
 
 // transfers holds the yearly bridge days ("munkanap-áthelyezés") published by
 // the ministry decree. CHECK EVERY YEAR – the decree is usually published in
-// the previous summer/autumn. Users can correct any day in the settings
-// (Beállítások → Munkanaptár) without rebuilding.
+// the previous summer/autumn.
 var transfers = map[int][]transfer{
 	2025: {
 		{"2025-05-02", KindRestDay, "Áthelyezett pihenőnap"},

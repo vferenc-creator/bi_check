@@ -4,7 +4,6 @@
 // Layout of the shared folder:
 //
 //	bicheck.json            marker + schema version of the folder
-//	calendar.json           shared working-day calendar overrides
 //	reports\<id>.json       one file per report (no two people ever write the same file
 //	                        unless they edit the same report – and that needs the lock)
 //	locks\<id>.lock         edit lock, created with CREATE_NEW semantics
@@ -26,7 +25,6 @@ import (
 	"fmt"
 	"time"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 )
 
@@ -99,14 +97,6 @@ type Manifest struct {
 	// MinWriterSchema: builds with an older SchemaVersion must not write.
 	MinWriterSchema int   `json:"minWriterSchema"`
 	Created         Stamp `json:"created"`
-}
-
-// CalendarDoc is calendar.json.
-type CalendarDoc struct {
-	Schema    int                `json:"schema"`
-	Revision  int                `json:"revision"`
-	Modified  Stamp              `json:"modified"`
-	Overrides calendar.Overrides `json:"overrides"`
 }
 
 // Lock is the content of locks\<id>.lock.

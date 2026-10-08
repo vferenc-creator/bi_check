@@ -52,8 +52,7 @@ type App struct {
 	pushPending bool
 	lastTray    string
 
-	shared  map[string]*sharedState // loaded shared team lists
-	memMeta map[string]string       // meta storage when the history DB is unavailable
+	shared map[string]*sharedState // loaded shared team lists
 
 	opt  Options
 	team *teamStateT
@@ -88,7 +87,7 @@ func New(p Platform, opt Options) (*App, error) {
 	if loc == nil {
 		loc = loadBudapest()
 	}
-	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}, stop: make(chan struct{}), memMeta: map[string]string{}, shared: map[string]*sharedState{}, opt: opt}
+	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}, stop: make(chan struct{}), shared: map[string]*sharedState{}, opt: opt}
 	a.opt.Identity = defaultIdentity(opt.Identity)
 	if opt.HistoryPath != "" {
 		h, err := store.OpenHistory(opt.HistoryPath)
@@ -104,7 +103,7 @@ func New(p Platform, opt Options) (*App, error) {
 		a.policy = notify.NewPolicy(nil)
 	}
 	s := st.Get()
-	a.cal = calendar.New(s.Calendar)
+	a.cal = calendar.Default
 	a.Checker = checker.New(nil, checker.Options{Timeout: time.Duration(s.TimeoutSec) * time.Second})
 	a.Engine = engine.New(engine.Config{
 		Checker:  a.Checker,
@@ -176,7 +175,7 @@ func (a *App) Close() {
 // reconfigure pushes the current settings into the engine.
 func (a *App) reconfigure() {
 	s := a.Settings.Get()
-	cal := calendar.New(a.calendarOverrides(s))
+	cal := calendar.Default
 	a.mu.Lock()
 	a.cal = cal
 	a.mu.Unlock()

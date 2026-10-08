@@ -77,7 +77,6 @@ Jelölés: ☐ = kipróbálandó, mellé írja az eredményt / eltérést.
 |---|---|---|---|
 | 8.1 | **A**: egy riportnál „Értesítés nekem” ki | **A** nem kap róla értesítést, **B** igen | ☐ |
 | 8.2 | **B**: Beállítások → Értesítések → egy csoport kikapcsolása | Csak **B**-re hat | ☐ |
-| 8.3 | **A**: Munkanaptár → új pihenőnap | **B**-n is megjelenik (közös) | ☐ |
 
 ## 9. Programverziók
 | # | Lépés | Elvárt eredmény | ☐ |

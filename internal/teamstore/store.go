@@ -40,8 +40,6 @@ type Store struct {
 	locks      map[string]Lock
 	myLocks    map[string]bool
 	manifest   *Manifest
-	calendar   *CalendarDoc
-	calMeta    fileMeta
 	online     bool
 	lastErr    string
 	lastSync   time.Time
@@ -231,15 +229,12 @@ func (s *Store) Sync() ([]Event, error) {
 		parsed   map[string]*Report
 		badNew   map[string]string
 		locks    map[string]Lock
-		cal      *CalendarDoc
-		calMeta  fileMeta
 	}
 	s.mu.Lock()
 	known := map[string]fileMeta{}
 	for k, v := range s.meta {
 		known[k] = v
 	}
-	knownCal := s.calMeta
 	s.mu.Unlock()
 
 	var snap snapshot
@@ -304,16 +299,6 @@ func (s *Store) Sync() ([]Event, error) {
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		if info, err := os.Stat(s.dir("calendar.json")); err == nil {
-			fm := fileMeta{info.ModTime(), info.Size()}
-			snap.calMeta = fm
-			if fm != knownCal {
-				var c CalendarDoc
-				if err := readJSON(s.dir("calendar.json"), &c); err == nil {
-					snap.cal = &c
-				}
-			}
-		}
 		return nil
 	})
 
@@ -377,12 +362,6 @@ func (s *Store) Sync() ([]Event, error) {
 		snap.locks[id] = l
 	}
 	s.locks = snap.locks
-	if snap.cal != nil {
-		s.calendar = snap.cal
-		s.calMeta = snap.calMeta
-	} else if snap.calMeta == (fileMeta{}) {
-		s.calendar, s.calMeta = nil, fileMeta{}
-	}
 	s.cacheValid = false
 	s.saveCacheLocked()
 	return events, nil
@@ -480,11 +459,10 @@ func (s *Store) writable() error {
 // ---- Local cache ----------------------------------------------------------------
 
 type cacheFile struct {
-	Root     string       `json:"root"`
-	SyncedAt time.Time    `json:"syncedAt"`
-	Reports  []*Report    `json:"reports"`
-	Calendar *CalendarDoc `json:"calendar,omitempty"`
-	Manifest *Manifest    `json:"manifest,omitempty"`
+	Root     string    `json:"root"`
+	SyncedAt time.Time `json:"syncedAt"`
+	Reports  []*Report `json:"reports"`
+	Manifest *Manifest `json:"manifest,omitempty"`
 }
 
 func (s *Store) cachePath() string {
@@ -506,7 +484,6 @@ func (s *Store) loadCache() {
 	for _, r := range c.Reports {
 		s.reports[r.ID] = r
 	}
-	s.calendar = c.Calendar
 	s.manifest = c.Manifest
 	if c.Manifest != nil {
 		s.readOnly = readOnlyReason(c.Manifest)
@@ -520,7 +497,7 @@ func (s *Store) saveCacheLocked() {
 	if p == "" {
 		return
 	}
-	c := cacheFile{Root: s.opt.Root, SyncedAt: s.lastSync, Calendar: s.calendar, Manifest: s.manifest}
+	c := cacheFile{Root: s.opt.Root, SyncedAt: s.lastSync, Manifest: s.manifest}
 	for _, r := range s.reports {
 		c.Reports = append(c.Reports, r)
 	}

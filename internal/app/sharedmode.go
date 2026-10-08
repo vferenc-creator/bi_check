@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 	"bimonitor/internal/teamstore"
 )
@@ -99,15 +98,6 @@ func (a *App) teamState() *teamStateT {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.team
-}
-
-func (a *App) calendarOverrides(s model.Settings) calendar.Overrides {
-	if ts := a.teamStore(); ts != nil {
-		if o, _, ok := ts.Calendar(); ok {
-			return o
-		}
-	}
-	return s.Calendar
 }
 
 // teamItems converts the shared reports into items for the engine and UI.

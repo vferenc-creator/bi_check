@@ -1339,8 +1339,8 @@ views.settings = main => {
     h("div", { class: "card-b" },
       row("Indítás a Windows-zal", "Bejelentkezéskor automatikusan elindul a tálcán (admin jog nem kell).", sw(s, "autostart")),
       row("Ellenőrzési gyakoriság", "Másodperc. Az elvárt időpontokban ezen felül is ellenőriz.", num(s, "checkIntervalSec", 10, 3600)),
-      row("Hálózati időkorlát", "Másodperc. Ennyi után az elem „Elérhetetlen” lesz.", num(s, "timeoutSec", 1, 120)),
-      row("Párhuzamos ellenőrzések", "Egyszerre ennyi fájlt vizsgál.", num(s, "parallelism", 1, 32)),
+      row("Hálózati időkorlát", "Másodperc. Ennyi után számít egy kérés sikertelennek; a program ilyenkor újrapróbálja.", num(s, "timeoutSec", 1, 120)),
+      row("Párhuzamos ellenőrzések", "Egyszerre ennyi fájlt vizsgál (egy szerver felé legfeljebb 3 kérés fut, a többi sorban vár).", num(s, "parallelism", 1, 32)),
       row("Előzmények megőrzése", "Nap.", num(s, "historyDays", 7, 3650)),
       row("Megjelenés", null, h("select", { class: "input", onchange: e => { s.theme = e.target.value; } },
         [["system", "Rendszer szerint"], ["light", "Világos"], ["dark", "Sötét"]].map(([v, l]) => h("option", { value: v, selected: s.theme === v }, l)))),
@@ -1369,10 +1369,10 @@ views.settings = main => {
   }
 };
 
-// ---- Settings: e-mail, daily summary, calendar, shared lists, data (phase 4)
+// ---- Settings: e-mail, shared mode, data
 function settingsExtra(grid, s, row, sw, num, timeIn) {
-  const e = s.email, ds = s.dailySummary;
-  S.emailDraft = { email: e, summary: ds, newPassword: null };
+  const e = s.email;
+  S.emailDraft = { email: e, newPassword: null };
   const inp = (obj, key, attrs) => h("input", Object.assign({ class: "input", value: obj[key] || "", oninput: ev => { obj[key] = ev.target.value; } }, attrs || {}));
   const pw = h("input", { class: "input", type: "password", placeholder: e.passwordEnc ? "•••••• (tárolva – üresen hagyva nem változik)" : "", oninput: ev => { S.emailDraft.newPassword = ev.target.value; } });
   const toArea = h("textarea", { class: "input", rows: 2, placeholder: "bi-csapat@energofish.hu; kontrolling@energofish.hu", oninput: ev => { e.to = [ev.target.value]; } }, (e.to || []).join("; "));
@@ -1397,22 +1397,6 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
       } }, icon("mail"), "Küldés")),
     )));
 
-  grid.append(h("div", { class: "card" },
-    h("div", { class: "card-h" }, icon("calendar"), h("h3", {}, "Napi összefoglaló")),
-    h("div", { class: "card-b" },
-      row("Napi összefoglaló", "Minden nap egyszer, a megadott időpont után.", sw(ds, "enabled")),
-      row("Időpont", null, timeIn(ds, "time")),
-      row("Csak munkanapokon", null, sw(ds, "workdaysOnly")),
-      row("Windows értesítésként", null, sw(ds, "toast")),
-      row("E-mailben (HTML táblázat)", "Az SMTP beállításokat használja.", sw(ds, "email")),
-      row("Csak ha van probléma", "Ha minden rendben, nem küld semmit.", sw(ds, "onlyProblems")),
-      row("Küldés most", null, h("button", { class: "btn sm", onclick: async () => { try { await saveAll(true); await api("sendSummaryNow"); toast("Összefoglaló elküldve."); } catch (err) { fail(err); } } }, icon("bell"), "Küldés")),
-    )));
-
-  const calCard = h("div", { class: "card" });
-  grid.append(calCard);
-  drawCalendar(calCard, new Date().getFullYear());
-
   const teamCard = h("div", { class: "card" });
   grid.prepend(teamCard);
   drawTeam(teamCard);
@@ -1435,47 +1419,10 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
 async function saveAll(silent) {
   const s = S.settingsDraft;
   S.settings = await api("saveSettings", s);
-  S.settings = await api("saveEmail", { email: S.emailDraft.email, summary: S.emailDraft.summary, newPassword: S.emailDraft.newPassword || null });
+  S.settings = await api("saveEmail", { email: S.emailDraft.email, newPassword: S.emailDraft.newPassword || null });
   S.emailDraft.newPassword = null;
   applyTheme();
   if (!silent) toast("Beállítások mentve.");
-}
-
-async function drawCalendar(card, year) {
-  let cv;
-  try { cv = await api("getCalendar", year); } catch (e) { return fail(e); }
-  const o = cv.overrides || {};
-  o.restDays = o.restDays || []; o.workDays = o.workDays || []; o.ignore = o.ignore || [];
-  const save = async () => { try { await api("saveCalendar", o); drawCalendar(card, year); toast("Munkanaptár mentve."); } catch (e) { fail(e); } };
-  const kindLabel = { holiday: "munkaszüneti nap", rest: "pihenőnap", work: "munkanap" };
-  const kindColor = { holiday: "var(--missing)", rest: "var(--late)", work: "var(--ok)" };
-  const wd = ["V", "H", "K", "Sze", "Cs", "P", "Szo"];
-  const list = h("div", { class: "cal-list" });
-  for (const d of cv.days) {
-    const custom = o.restDays.includes(d.date) || o.workDays.includes(d.date);
-    list.append(h("div", { class: "cal-row" },
-      h("span", { class: "d" }, d.date), h("span", { class: "muted", style: { width: "28px" } }, wd[new Date(d.date + "T12:00").getDay()]),
-      h("span", { class: "k", style: { color: kindColor[d.kind], fontWeight: 600 } }, kindLabel[d.kind]),
-      h("span", { class: "grow" }, d.name),
-      custom ? h("button", { class: "btn sm ghost", onclick: () => { o.restDays = o.restDays.filter(x => x !== d.date); o.workDays = o.workDays.filter(x => x !== d.date); save(); } }, "törlés")
-        : h("button", { class: "btn sm ghost", title: "Figyelmen kívül hagyás (ha a beépített adat hibás)", onclick: () => { o.ignore.push(d.date); save(); } }, "kihagyás")));
-  }
-  const dIn = h("input", { class: "input", type: "date" });
-  const kSel = h("select", { class: "input" }, h("option", { value: "rest" }, "pihenőnap"), h("option", { value: "work" }, "munkanap (pl. szombat)"));
-  clear(card).append(
-    h("div", { class: "card-h" }, icon("calendar"), h("h3", {}, "Munkanaptár"), h("div", { class: "grow" }),
-      h("select", { class: "input", style: { height: "30px" }, onchange: e => drawCalendar(card, parseInt(e.target.value, 10)) },
-        [year - 1, year, year + 1].map(y => h("option", { value: y, selected: y === cv.year }, y)))),
-    h("div", { class: "card-b" },
-      h("p", { class: "small muted", style: { marginTop: 0 } }, "Beépítve: az ünnepnapok minden évre, az áthelyezett munkanapok " + cv.knownYears.join(", ") + "-ra/re. Az áthelyezéseket évente (az NGM-rendelet megjelenése után) itt kell felvenni vagy javítani."),
-      list,
-      h("div", { class: "row", style: { marginTop: "10px" } }, dIn, kSel, h("button", { class: "btn sm", onclick: () => {
-        if (!dIn.value) return;
-        (kSel.value === "rest" ? o.restDays : o.workDays).push(dIn.value);
-        save();
-      } }, icon("plus"), "Hozzáadás")),
-      o.ignore.length ? h("div", { class: "small muted", style: { marginTop: "8px" } }, "Figyelmen kívül hagyott beépített napok: ", o.ignore.join(", "), " ",
-        h("button", { class: "btn sm ghost", onclick: () => { o.ignore = []; save(); } }, "visszaállítás")) : null));
 }
 
 async function setOverride(id, patch) {

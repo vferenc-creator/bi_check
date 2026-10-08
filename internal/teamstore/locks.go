@@ -110,7 +110,7 @@ func (s *Store) createLock(id string) error {
 	return nil
 }
 
-// Acquire takes the edit lock of a report (or of "_calendar"). If another
+// Acquire takes the edit lock of a report. If another
 // instance holds it, a *LockedError is returned – unless its heartbeat is
 // older than the TTL, in which case the orphaned lock is taken over.
 func (s *Store) Acquire(id string) (Lock, error) {
@@ -360,12 +360,10 @@ func (s *Store) ForceUnlock(id string) (Lock, error) {
 	s.mu.Lock()
 	delete(s.locks, id)
 	s.mu.Unlock()
-	if id != CalendarLockID {
-		// Record it in the change log (takes and releases the lock briefly).
-		if _, err := s.Acquire(id); err == nil {
-			_ = s.appendChange(id, Change{Action: "unlocked", Note: "Zár kézi feloldása – korábban: " + prev.Holder()})
-			_ = s.Release(id)
-		}
+	// Record it in the change log (takes and releases the lock briefly).
+	if _, err := s.Acquire(id); err == nil {
+		_ = s.appendChange(id, Change{Action: "unlocked", Note: "Zár kézi feloldása – korábban: " + prev.Holder()})
+		_ = s.Release(id)
 	}
 	return prev, nil
 }

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 	"bimonitor/internal/schedule"
 	"bimonitor/internal/teamstore"
@@ -205,14 +204,7 @@ func TestSharedModeTwoUsers(t *testing.T) {
 		t.Fatalf("change log: %+v", ch)
 	}
 
-	// --- Shared calendar.
-	if err := rpcErr(anna, "saveCalendar", calendar.Overrides{RestDays: []string{"2026-10-09"}}); err != nil {
-		t.Fatal(err)
-	}
 	call[Snapshot](t, bela, "teamSyncNow", nil)
-	if bela.Calendar().IsWorkday(mustDate("2026-10-09")) {
-		t.Fatal("bela should use the shared calendar")
-	}
 
 	// --- Offline: the folder disappears.
 	hidden := shared + "-x"

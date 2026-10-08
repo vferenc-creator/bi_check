@@ -9,13 +9,9 @@ import (
 	"reflect"
 	"strings"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
 	"bimonitor/internal/schedule"
 )
-
-// CalendarLockID is the lock used for calendar.json.
-const CalendarLockID = "_calendar"
 
 func (s *Store) reportPath(id string) string { return s.dir("reports", id+".json") }
 
@@ -254,51 +250,6 @@ func ChangedFields(a, b model.Item) []string {
 		}
 	}
 	return out
-}
-
-// ---- Shared calendar -------------------------------------------------------------
-
-// Calendar returns the shared calendar overrides (and their revision).
-func (s *Store) Calendar() (calendar.Overrides, int, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.calendar == nil {
-		return calendar.Overrides{}, 0, false
-	}
-	return s.calendar.Overrides, s.calendar.Revision, true
-}
-
-// SaveCalendar writes calendar.json (takes the calendar lock briefly).
-func (s *Store) SaveCalendar(o calendar.Overrides, baseRev int) error {
-	if _, err := s.Acquire(CalendarLockID); err != nil {
-		return err
-	}
-	defer s.Release(CalendarLockID)
-	return withTimeout(s.opt.Timeout, func() error {
-		var cur CalendarDoc
-		if err := readJSON(s.dir("calendar.json"), &cur); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if cur.Schema > SchemaVersion {
-			return &ReadOnlyError{"A munkanaptárat egy újabb programverzió mentette – frissítse a BI Monitort."}
-		}
-		if baseRev >= 0 && cur.Revision != baseRev {
-			return fmt.Errorf("a munkanaptárat közben módosította %s – töltse be újra", cur.Modified.Name())
-		}
-		doc := CalendarDoc{Schema: SchemaVersion, Revision: cur.Revision + 1, Modified: s.stamp(), Overrides: o}
-		b, _ := json.MarshalIndent(doc, "", "  ")
-		if err := writeAtomic(s.opt.Root, "calendar.json", b, s.opt.Identity.Instance); err != nil {
-			return err
-		}
-		s.mu.Lock()
-		s.calendar = &doc
-		if info, err := os.Stat(s.dir("calendar.json")); err == nil {
-			s.calMeta = fileMeta{info.ModTime(), info.Size()}
-		}
-		s.saveCacheLocked()
-		s.mu.Unlock()
-		return nil
-	})
 }
 
 // ---- Migration helper ---------------------------------------------------------------

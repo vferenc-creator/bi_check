@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"bimonitor/internal/calendar"
 	"bimonitor/internal/schedule"
 )
 
@@ -191,16 +190,6 @@ type EmailSettings struct {
 	OnRecovery  bool     `json:"onRecovery"`
 }
 
-// DailySummary sends a status digest once a day.
-type DailySummary struct {
-	Enabled      bool   `json:"enabled"`
-	Time         string `json:"time"`
-	WorkdaysOnly bool   `json:"workdaysOnly"`
-	Toast        bool   `json:"toast"`
-	Email        bool   `json:"email"`
-	OnlyProblems bool   `json:"onlyProblems"` // skip the digest when everything is OK
-}
-
 // SharedList is a team-maintained JSON list on a network share.
 type SharedList struct {
 	ID      string `json:"id"`
@@ -241,8 +230,6 @@ type Settings struct {
 
 	Notifications NotificationSettings    `json:"notifications"`
 	Email         EmailSettings           `json:"email"`
-	DailySummary  DailySummary            `json:"dailySummary"`
-	Calendar      calendar.Overrides      `json:"calendar"`
 	SharedLists   []SharedList            `json:"sharedLists,omitempty"`
 	Overrides     map[string]ItemOverride `json:"overrides,omitempty"`
 	// MutedGroups: personal – no notifications for reports of these groups.
@@ -270,9 +257,8 @@ func DefaultSettings() Settings {
 			OnRecovery: true,
 			Quiet:      QuietHours{From: "22:00", To: "06:00"},
 		},
-		Email:        EmailSettings{Port: 25, Security: "starttls", OnProblems: true},
-		DailySummary: DailySummary{Time: "07:30", WorkdaysOnly: true, Toast: true},
-		Items:        []Item{},
+		Email: EmailSettings{Port: 25, Security: "starttls", OnProblems: true},
+		Items: []Item{},
 	}
 }
 
@@ -305,9 +291,6 @@ func (s *Settings) Normalize() {
 	}
 	if s.Email.Security == "" {
 		s.Email.Security = d.Email.Security
-	}
-	if s.DailySummary.Time == "" {
-		s.DailySummary.Time = d.DailySummary.Time
 	}
 	if s.Items == nil {
 		s.Items = []Item{}

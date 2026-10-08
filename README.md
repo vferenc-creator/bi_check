@@ -34,8 +34,8 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
 8. [Közös mód (csapat)](#közös-mód-csapat) · [Import/export](#importexport)
-9. [E-mail és napi összefoglaló](#e-mail-és-napi-összefoglaló)
-10. [Munkanaptár](#munkanaptár)
+9. [E-mail](#e-mail)
+10. [Munkaszüneti napok](#munkaszüneti-napok)
 11. [Hol vannak a beállítások?](#hol-vannak-a-beállítások)
 12. [Parancssori kapcsolók](#parancssori-kapcsolók)
 13. [Hibaelhárítás](#hibaelhárítás)
@@ -200,7 +200,7 @@ Közös módban a figyelt riportok listája **egy hálózati mappában** van (pl
 
 | Közös (a közös mappában) | Személyes (a saját gépen) |
 |---|---|
-| a riportok összes beállítása (útvonal, ütemezés, türelmi idő, gyanússági szabályok, csoport, felelős, megjegyzés, extra e-mail címzettek), a figyelés be/ki kapcsolása, a **munkanaptár** | **kiről kér értesítést** (riportonként a részletpanelen, csoportonként a *Beállítások → Értesítések* alatt), csendes időszak, szünet, automatikus indulás, ablak, SMTP, napi összefoglaló, nyugtázás, előzmények |
+| a riportok összes beállítása (útvonal, ütemezés, türelmi idő, gyanússági szabályok, csoport, felelős, megjegyzés, extra e-mail címzettek), a figyelés be/ki kapcsolása | **kiről kér értesítést** (riportonként a részletpanelen, csoportonként a *Beállítások → Értesítések* alatt), csendes időszak, szünet, automatikus indulás, ablak, SMTP, nyugtázás, előzmények |
 
 **Szerkesztés és zárolás**
 - Amikor valaki megnyit egy riportot szerkesztésre, a riport a többiek számára **zárolt**. Náluk lakat ikon és „Szerkeszti: Kiss Anna (EF-PC12), 10:42 óta” felirat látszik. Megnézni lehet, szerkeszteni nem.
@@ -225,7 +225,6 @@ Közös módban a figyelt riportok listája **egy hálózati mappában** van (pl
 **Hogyan van megoldva (a mappa tartalma)**
 ```
 bicheck.json          formátumverzió (ne törölje)
-calendar.json         közös munkanaptár
 reports\<azonosító>.json   egy riport = egy fájl (verziószám, létrehozó, módosító, lomtár-jelölés, változásnapló)
 locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az életjel a fájl dátuma)
 ```
@@ -243,7 +242,7 @@ locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az �
 
 ---
 
-## E-mail és napi összefoglaló
+## E-mail
 
 **E-mail (SMTP)** – Beállítások → E-mail értesítés:
 - szerver, port, titkosítás (STARTTLS / TLS / nincs), felhasználónév és jelszó (belső relay esetén üresen hagyható), feladó, címzettek (pontosvesszővel elválasztva);
@@ -252,23 +251,19 @@ locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az �
 - a **Próbaüzenet** gombbal kipróbálható;
 - a csendes időszak az e-mailekre nem vonatkozik.
 
-**Napi összefoglaló:** minden nap egyszer, a megadott időpont után (opcionálisan csak munkanapokon). Windows-értesítésként és/vagy HTML-táblázatos e-mailként érkezik, és beállítható, hogy csak probléma esetén küldjön.
-
 ---
 
-## Munkanaptár
+## Munkaszüneti napok
 
-**Beépítve:**
+A „Munkanapokon” ütemezés (és a „munkaszüneti napon kihagyás / áthelyezés” opciók) a beépített magyar naptárat használják. **Beépítve:**
 - a munkaszüneti napok: jan. 1., márc. 15., nagypéntek, húsvét, máj. 1., pünkösd, aug. 20., okt. 23., nov. 1., dec. 25–26.;
 - az **áthelyezett munkanapok** 2025-re és 2026-ra. 2026-ban: jan. 2. pihenőnap / jan. 10. munkanap; aug. 21. pihenőnap / aug. 8. munkanap; dec. 24. pihenőnap / dec. 12. munkanap.
 
-> **Évente frissíteni kell!** Az áthelyezéseket az NGM-rendelet minden évben újra meghatározza. A *Beállítások → Munkanaptár* kártyán bármelyik nap felvehető (pihenőnap vagy munkanap), és a beépített napok közül bármelyik figyelmen kívül hagyható, újrafordítás nélkül.
+> **Évente frissíteni kell!** Az áthelyezéseket az NGM-rendelet minden évben újra meghatározza; az új év adatai programfrissítéssel kerülnek be.
 >
 > 2026 őszén törvényjavaslat van a parlament előtt, amely december 24-ét munkaszüneti nappá tenné. Ha elfogadják, ellenőrizze a december 12-i szombati munkanapot.
 
 A kódban az évenkénti adatok helye: `internal/calendar/transfers.go`.
-
-Közös módban a munkanaptár saját kiegészítései is közösek (`calendar.json` a közös mappában), így minden gép ugyanazokat a munkanapokat látja.
 
 ---
 
@@ -283,7 +278,7 @@ Közös módban a munkanaptár saját kiegészítései is közösek (`calendar.j
 | `%LOCALAPPDATA%\EnergofishMonitor\WebView2\` | a felület böngészőmotorjának gyorsítótára |
 | `%LOCALAPPDATA%\EnergofishMonitor\shared-cache.json` | közös módban a közös lista helyi másolata (offline működéshez) |
 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\EnergofishBIMonitor` | automatikus indítás |
-| *közös mappa* (közös módban) | a riportdefiníciók, zárak, munkanaptár – lásd [Közös mód](#közös-mód-csapat) |
+| *közös mappa* (közös módban) | a riportdefiníciók és zárak – lásd [Közös mód](#közös-mód-csapat) |
 
 A beállítások a roaming `APPDATA` alatt vannak, mert kicsik és a felhasználóhoz tartoznak. Az előzmények és a gyorsítótár a gépenkénti `LOCALAPPDATA` alatt vannak, mert SQLite adatbázist nem szabad vándorló profilban tartani.
 
@@ -310,7 +305,7 @@ Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
 - **Nem jelennek meg értesítések:** próbálja ki a *Beállítások → Próbaértesítés* gombot. Ellenőrizze a Windows *Beállítások → Rendszer → Értesítések* oldalán, hogy a „BI Output Monitor” engedélyezve van-e, és hogy nincs-e bekapcsolva a *Ne zavarjanak* mód. A tálcamenüben azt is nézze meg, nincs-e szüneteltetve.
 - **Minden elem „Elérhetetlen”:** hálózati vagy VPN-probléma, illetve a szerver nem érhető el. A lista tetején látszik, melyik szerver esett ki. Nézze meg Intézőben, elérhető-e az útvonal.
 - **„Hozzáférés megtagadva”:** a bejelentkezett felhasználónak nincs olvasási joga a mappához.
-- **Rossz időpontok:** nézze meg a szerkesztő ütemezés-előnézetét és a munkanaptárat.
+- **Rossz időpontok:** nézze meg a szerkesztő ütemezés-előnézetét.
 - **Közös mód – „Szerkeszti: X”, de X már nem szerkeszti:** ha az életjel 10 perce nem frissült, a zár magától lejár. Ha sürgős, a *Zár feloldása* gombbal azonnal feloldható (ez naplózódik).
 - **Közös mód – offline sáv:** a közös mappa nem érhető el (VPN, hálózat, jogosultság). A figyelés közben fut tovább, visszatéréskor automatikusan frissül.
 - **Közös mód – „újabb programverzió kezeli”:** frissítse a BI Monitort a [legfrissebb kiadásra](https://github.com/vferenc-creator/bi_check/releases/latest).
