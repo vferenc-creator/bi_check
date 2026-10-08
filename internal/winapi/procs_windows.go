@@ -69,8 +69,13 @@ var (
 
 	pWNetGetConnectionW = mpr.NewProc("WNetGetConnectionW")
 
-	pGetOpenFileNameW = comdlg32.NewProc("GetOpenFileNameW")
-	pGetSaveFileNameW = comdlg32.NewProc("GetSaveFileNameW")
+	pGetOpenFileNameW     = comdlg32.NewProc("GetOpenFileNameW")
+	pGetSaveFileNameW     = comdlg32.NewProc("GetSaveFileNameW")
+	pCommDlgExtendedError = comdlg32.NewProc("CommDlgExtendedError")
+
+	pEnumWindows              = user32.NewProc("EnumWindows")
+	pGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	pGetClassNameW            = user32.NewProc("GetClassNameW")
 
 	pDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
 )

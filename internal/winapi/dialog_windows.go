@@ -3,6 +3,7 @@
 package winapi
 
 import (
+	"log"
 	"strings"
 	"unsafe"
 
@@ -92,6 +93,9 @@ func fileDialog(save bool, owner uintptr, title, initialDir, defaultName, defExt
 		r, _, _ = pGetOpenFileNameW.Call(uintptr(unsafe.Pointer(&ofn)))
 	}
 	if r == 0 {
+		if code, _, _ := pCommDlgExtendedError.Call(); code != 0 {
+			log.Printf("file dialog error: CommDlgExtendedError=0x%04x", code)
+		}
 		return "", false
 	}
 	return windows.UTF16ToString(buf), true

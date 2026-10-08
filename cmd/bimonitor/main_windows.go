@@ -41,6 +41,7 @@ func main() {
 	debug := flag.Bool("debug", false, "fejlesztői eszközök engedélyezése")
 	dataDir := flag.String("data-dir", "", "adatkönyvtár felülbírálása")
 	selftest := flag.String("selftest", "", "automata teszt: megnyitja a felületet, az eredményt a megadott fájlba írja és kilép")
+	selftestDialog := flag.Bool("selftest-dialog", false, "a --selftest a fájlválasztót is megnyitja és bezárja")
 	flag.Parse()
 	if *dataDir != "" {
 		paths.Override = *dataDir
@@ -87,8 +88,12 @@ func main() {
 		a.OnCall = func(method string) {
 			if method == "listItems" {
 				once.Do(func() {
-					_ = os.WriteFile(*selftest, []byte("ok"), 0o644)
-					sh.Do(sh.Shutdown)
+					if !*selftestDialog {
+						_ = os.WriteFile(*selftest, []byte("ok"), 0o644)
+						sh.Do(sh.Shutdown)
+						return
+					}
+					go selftestFileDialog(a, sh, *selftest)
 				})
 			}
 		}
@@ -103,4 +108,36 @@ func main() {
 	a.Start()
 	sh.Run(!*minimized)
 	log.Printf("kilépés")
+}
+
+// selftestFileDialog opens the "Tallózás" dialog through the same RPC the UI
+// uses, checks that a dialog window really appears, then cancels it.
+func selftestFileDialog(a *app.App, sh *desktop.Shell, out string) {
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Call("browseFile", []byte(`""`))
+		done <- err
+	}()
+	result := "dialog-missing"
+	for i := 0; i < 100; i++ {
+		time.Sleep(200 * time.Millisecond)
+		if dlg := winapi.FindOwnDialog(); dlg != 0 {
+			result = "ok"
+			winapi.PostMessage(dlg, winapi.WM_COMMAND, 2 /* IDCANCEL */, 0)
+			break
+		}
+	}
+	select {
+	case err := <-done:
+		if err != nil && result == "ok" {
+			result = "dialog-error: " + err.Error()
+		}
+	case <-time.After(10 * time.Second):
+		if result == "ok" {
+			result = "dialog-did-not-close"
+		}
+	}
+	log.Printf("selftest dialog: %s", result)
+	_ = os.WriteFile(out, []byte(result), 0o644)
+	sh.Do(sh.Shutdown)
 }

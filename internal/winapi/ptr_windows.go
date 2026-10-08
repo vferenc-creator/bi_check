@@ -7,3 +7,5 @@ import "unsafe"
 func ptr[T any](p *T) unsafe.Pointer { return unsafe.Pointer(p) }
 
 func unsafeSizeof[T any](v T) uintptr { return unsafe.Sizeof(v) }
+
+func unsafePointer(p uintptr) unsafe.Pointer { return unsafe.Pointer(p) }

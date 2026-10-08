@@ -59,6 +59,16 @@ jobs:
           Write-Host "exit=$($p.ExitCode) result=$r"
           if (Test-Path "$d/local/logs/monitor.log") { Get-Content "$d/local/logs/monitor.log" }
           if ($r -ne "ok") { exit 1 }
+      - name: GUI smoke test – file picker ("Tallózás")
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP "bimon2"
+          $out = Join-Path $env:RUNNER_TEMP "selftest2.txt"
+          $p = Start-Process dist/BIMonitor.exe -ArgumentList "--data-dir", $d, "--selftest", $out, "--selftest-dialog" -PassThru -Wait
+          $r = if (Test-Path $out) { Get-Content $out } else { "no output" }
+          Write-Host "exit=$($p.ExitCode) result=$r"
+          if (Test-Path "$d/local/logs/monitor.log") { Get-Content "$d/local/logs/monitor.log" }
+          if ($r -ne "ok") { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: BIMonitor-exe
