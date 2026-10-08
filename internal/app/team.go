@@ -41,6 +41,9 @@ func sharedID(listID, itemID string) string { return sharedPrefix + listID + ":"
 // effectiveItems = personal items + items of enabled shared lists, with the
 // user's personal overrides applied.
 func (a *App) effectiveItems(s model.Settings) []model.Item {
+	if ts := a.teamStore(); ts != nil {
+		return a.teamItems(s, ts) // shared mode: the shared folder is the list
+	}
 	out := append([]model.Item(nil), s.Items...)
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -193,6 +196,7 @@ type CalendarView struct {
 	Days       []calendar.Day     `json:"days"`
 	Overrides  calendar.Overrides `json:"overrides"`
 	KnownYears []int              `json:"knownYears"`
+	Shared     bool               `json:"shared"` // stored in the shared folder
 }
 
 func (a *App) registerTeamAPI() {
@@ -270,7 +274,7 @@ func (a *App) registerTeamAPI() {
 			year = time.Now().Year()
 		}
 		s := a.Settings.Get()
-		return CalendarView{Year: year, Days: a.Calendar().Year(year), Overrides: s.Calendar, KnownYears: calendar.KnownTransferYears()}, nil
+		return CalendarView{Year: year, Days: a.Calendar().Year(year), Overrides: a.calendarOverrides(s), KnownYears: calendar.KnownTransferYears(), Shared: a.teamStore() != nil}, nil
 	})
 
 	a.register("saveCalendar", func(o calendar.Overrides) error {
@@ -280,6 +284,14 @@ func (a *App) registerTeamAPI() {
 					return err
 				}
 			}
+		}
+		if ts := a.teamStore(); ts != nil {
+			_, rev, _ := ts.Calendar()
+			if err := ts.SaveCalendar(o, rev); err != nil {
+				return teamErr(err)
+			}
+			a.reconfigure()
+			return nil
 		}
 		if _, err := a.Settings.Update(func(s *model.Settings) error { s.Calendar = o; return nil }); err != nil {
 			return err

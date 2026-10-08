@@ -69,6 +69,12 @@ func (p *devPlatform) SaveFileDialog(_ string, name, _ string, _ []app.FileFilte
 	return filepath.Join(os.TempDir(), name), true
 }
 
+func (p *devPlatform) FolderDialog(string, string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.nextDialog, p.nextDialog != ""
+}
+
 func (p *devPlatform) SetAutostart(on bool) error { p.autostart = on; return nil }
 func (p *devPlatform) AutostartEnabled() bool     { return p.autostart }
 
@@ -83,6 +89,7 @@ func main() {
 	a, err := app.New(p, app.Options{
 		SettingsPath: filepath.Join(*data, "settings.json"),
 		HistoryPath:  filepath.Join(*data, "history.db"),
+		LocalDir:     filepath.Join(*data, "local"),
 	})
 	if err != nil {
 		log.Fatal(err)

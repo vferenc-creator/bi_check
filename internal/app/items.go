@@ -14,20 +14,24 @@ import (
 	"bimonitor/internal/pathpattern"
 	"bimonitor/internal/schedule"
 	"bimonitor/internal/status"
+	"bimonitor/internal/teamstore"
 )
 
 // ItemView is an item together with its live state.
 type ItemView struct {
 	Item  model.Item       `json:"item"`
 	State engine.ItemState `json:"state"`
+	Team  *TeamItemInfo    `json:"team,omitempty"` // shared mode only
 }
 
 // Snapshot is what the UI renders.
 type Snapshot struct {
-	Items   []ItemView `json:"items"`
-	Servers any        `json:"servers"`
-	Paused  time.Time  `json:"pausedUntil"`
-	At      time.Time  `json:"at"`
+	Items       []ItemView `json:"items"`
+	Servers     any        `json:"servers"`
+	Paused      time.Time  `json:"pausedUntil"`
+	At          time.Time  `json:"at"`
+	Team        *TeamView  `json:"team"`
+	MutedGroups []string   `json:"mutedGroups"`
 }
 
 func (a *App) snapshot() Snapshot {
@@ -37,13 +41,23 @@ func (a *App) snapshot() Snapshot {
 		states[st.ID] = st
 	}
 	items := a.effectiveItems(s)
-	out := Snapshot{Items: make([]ItemView, 0, len(items)), Servers: a.Engine.Servers(), Paused: s.Notifications.PausedUntil, At: time.Now()}
+	out := Snapshot{Items: make([]ItemView, 0, len(items)), Servers: a.Engine.Servers(), Paused: s.Notifications.PausedUntil, At: time.Now(),
+		Team: a.teamView(s), MutedGroups: s.MutedGroups}
+	ts, tst := a.teamStore(), a.teamState()
+	var locks map[string]teamstore.Lock
+	if ts != nil {
+		locks = ts.Locks()
+	}
 	for _, it := range items {
 		st, ok := states[it.ID]
 		if !ok {
 			st = engine.ItemState{ID: it.ID, Status: model.StatusUnknown, ScheduleText: it.Schedule.Describe()}
 		}
-		out.Items = append(out.Items, ItemView{Item: it, State: st})
+		v := ItemView{Item: it, State: st}
+		if ts != nil && tst != nil {
+			v.Team = a.teamInfo(s, ts, tst, it.ID, locks)
+		}
+		out.Items = append(out.Items, v)
 	}
 	return out
 }
@@ -60,7 +74,11 @@ func (a *App) findItem(id string) (model.Item, bool) {
 func (a *App) view(id string) ItemView {
 	it, _ := a.findItem(id)
 	st, _ := a.Engine.State(id)
-	return ItemView{Item: it, State: st}
+	v := ItemView{Item: it, State: st}
+	if ts, tst := a.teamStore(), a.teamState(); ts != nil && tst != nil {
+		v.Team = a.teamInfo(a.Settings.Get(), ts, tst, id, ts.Locks())
+	}
+	return v
 }
 
 var driveRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
@@ -108,8 +126,9 @@ func (a *App) normalizeItem(it *model.Item) (warnings []string, err error) {
 
 // SaveResult is returned by saveItem.
 type SaveResult struct {
-	View     ItemView `json:"view"`
-	Warnings []string `json:"warnings,omitempty"`
+	View     ItemView      `json:"view"`
+	Warnings []string      `json:"warnings,omitempty"`
+	Conflict *ConflictInfo `json:"conflict,omitempty"` // shared mode: newer version on the share
 }
 
 func (a *App) saveItem(it model.Item) (SaveResult, error) {
@@ -119,6 +138,11 @@ func (a *App) saveItem(it model.Item) (SaveResult, error) {
 	warn, err := a.normalizeItem(&it)
 	if err != nil {
 		return SaveResult{}, err
+	}
+	if ts := a.teamStore(); ts != nil {
+		res, err := a.teamSave(ts, it, false)
+		res.Warnings = warn
+		return res, err
 	}
 	now := time.Now()
 	_, err = a.Settings.Update(func(s *model.Settings) error {
@@ -207,6 +231,11 @@ func (a *App) registerItemAPI() {
 	a.register("saveItem", a.saveItem)
 
 	a.register("deleteItem", func(p idParam) error {
+		if ts := a.teamStore(); ts != nil {
+			err := withTeamLock(ts, p.ID, func() error { _, err := ts.Delete(p.ID, -1); return err })
+			a.reconfigure()
+			return err
+		}
 		_, err := a.Settings.Update(func(s *model.Settings) error {
 			for i := range s.Items {
 				if s.Items[i].ID == p.ID {
@@ -236,6 +265,18 @@ func (a *App) registerItemAPI() {
 	})
 
 	a.register("setEnabled", func(p enableParam) (ItemView, error) {
+		if ts := a.teamStore(); ts != nil {
+			r, ok := ts.Get(p.ID)
+			if !ok {
+				return ItemView{}, errors.New("az elem nem található")
+			}
+			it := r.Definition
+			it.ID = r.ID
+			it.Enabled = p.Enabled
+			err := withTeamLock(ts, p.ID, func() error { _, err := ts.Save(it, -1); return err })
+			a.reconfigure()
+			return a.view(p.ID), err
+		}
 		if strings.HasPrefix(p.ID, sharedPrefix) {
 			err := a.setOverride(p.ID, func(ov *model.ItemOverride) { ov.Disabled = !p.Enabled })
 			return a.view(p.ID), err

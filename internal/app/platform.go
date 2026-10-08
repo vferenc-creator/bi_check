@@ -28,6 +28,7 @@ type Platform interface {
 
 	OpenFileDialog(title, initialDir string, filters []FileFilter) (string, bool)
 	SaveFileDialog(title, defaultName, defExt string, filters []FileFilter) (string, bool)
+	FolderDialog(title, initialDir string) (string, bool)
 	ShellOpen(path string) error
 	ShowInFolder(path string) error
 	// ToUNC converts a mapped drive path to UNC (unchanged if not mapped).
@@ -50,10 +51,11 @@ func (NullPlatform) OpenFileDialog(string, string, []FileFilter) (string, bool) 
 func (NullPlatform) SaveFileDialog(string, string, string, []FileFilter) (string, bool) {
 	return "", false
 }
-func (NullPlatform) ShellOpen(string) error             { return nil }
-func (NullPlatform) ShowInFolder(string) error          { return nil }
-func (NullPlatform) ToUNC(p string) (string, bool)      { return p, false }
-func (NullPlatform) SetAutostart(bool) error            { return nil }
-func (NullPlatform) AutostartEnabled() bool             { return false }
-func (NullPlatform) Protect(b []byte) ([]byte, error)   { return b, nil }
-func (NullPlatform) Unprotect(b []byte) ([]byte, error) { return b, nil }
+func (NullPlatform) FolderDialog(string, string) (string, bool) { return "", false }
+func (NullPlatform) ShellOpen(string) error                     { return nil }
+func (NullPlatform) ShowInFolder(string) error                  { return nil }
+func (NullPlatform) ToUNC(p string) (string, bool)              { return p, false }
+func (NullPlatform) SetAutostart(bool) error                    { return nil }
+func (NullPlatform) AutostartEnabled() bool                     { return false }
+func (NullPlatform) Protect(b []byte) ([]byte, error)           { return b, nil }
+func (NullPlatform) Unprotect(b []byte) ([]byte, error)         { return b, nil }

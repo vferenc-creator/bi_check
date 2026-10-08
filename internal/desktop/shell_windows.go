@@ -219,8 +219,9 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-// onWindowClosed shows the one-time "still running" hint.
+// onWindowClosed releases edit locks and shows the one-time "still running" hint.
 func (sh *Shell) onWindowClosed() {
+	sh.app.UIClosed()
 	s := sh.app.Settings.Get()
 	if s.CloseHintShown {
 		return
@@ -352,6 +353,12 @@ func (sh *Shell) SaveFileDialog(title, defaultName, defExt string, filters []app
 	sh.dialogTask(func() {
 		path, ok = winapi.SaveFileDialog(sh.owner(), title, defaultName, defExt, toWinFilters(filters))
 	})
+	return
+}
+
+// FolderDialog shows the native folder picker.
+func (sh *Shell) FolderDialog(title, initialDir string) (path string, ok bool) {
+	sh.dialogTask(func() { path, ok = winapi.FolderDialog(sh.owner(), title, initialDir) })
 	return
 }
 

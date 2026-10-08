@@ -33,7 +33,7 @@ func (a *App) handleEvents(evs []engine.Event) {
 					log.Printf("history: %v", err)
 				}
 			}
-			muted := s.Overrides[ev.Item.ID].Mute
+			muted := s.Overrides[ev.Item.ID].Mute || s.GroupMuted(ev.Item.Group)
 			notices = append(notices, a.policy.OnTransition(ev, s, muted, now)...)
 		case engine.EvArrival:
 			if a.History == nil {

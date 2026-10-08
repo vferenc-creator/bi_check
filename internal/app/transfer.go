@@ -174,6 +174,9 @@ type ImportPreview struct {
 
 func (a *App) previewImport(items []model.Item) []ImportRow {
 	existing := a.Settings.Get().Items
+	if a.teamStore() != nil {
+		existing = a.effectiveItems(a.Settings.Get())
+	}
 	byID := map[string]model.Item{}
 	byPath := map[string]model.Item{}
 	for _, it := range existing {
@@ -203,6 +206,40 @@ func (a *App) previewImport(items []model.Item) []ImportRow {
 
 func (a *App) applyImport(rows []ImportRow) (map[string]int, error) {
 	counts := map[string]int{"added": 0, "updated": 0}
+	if ts := a.teamStore(); ts != nil {
+		var errs []string
+		for _, r := range rows {
+			if r.Action == "invalid" {
+				continue
+			}
+			it := r.Item
+			if _, err := a.normalizeItem(&it); err != nil {
+				errs = append(errs, it.Name+": "+err.Error())
+				continue
+			}
+			if r.Action == "update" {
+				if err := withTeamLock(ts, it.ID, func() error { _, err := ts.Save(it, -1); return err }); err != nil {
+					errs = append(errs, it.Name+": "+err.Error())
+					continue
+				}
+				counts["updated"]++
+				continue
+			}
+			if _, _, dup := ts.Duplicate(it); dup {
+				it.ID = ""
+			}
+			if _, err := ts.Create(it, "imported"); err != nil {
+				errs = append(errs, it.Name+": "+teamErr(err).Error())
+				continue
+			}
+			counts["added"]++
+		}
+		a.reconfigure()
+		if len(errs) > 0 {
+			return counts, errors.New(strings.Join(errs, "\n"))
+		}
+		return counts, nil
+	}
 	now := time.Now()
 	_, err := a.Settings.Update(func(s *model.Settings) error {
 		idx := map[string]int{}

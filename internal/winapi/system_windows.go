@@ -159,3 +159,23 @@ func Unprotect(enc []byte) ([]byte, error) {
 	defer windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data)))
 	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil
 }
+
+// ---- Current user ---------------------------------------------------------------
+
+var pGetUserNameExW = windows.NewLazySystemDLL("secur32.dll").NewProc("GetUserNameExW")
+
+// UserDisplayName returns the user's full name from the domain (e.g.
+// "Kiss Anna"), or "" if not available.
+func UserDisplayName() string {
+	const nameDisplay = 3
+	if pGetUserNameExW.Find() != nil {
+		return ""
+	}
+	n := uint32(256)
+	buf := make([]uint16, n)
+	r, _, _ := pGetUserNameExW.Call(nameDisplay, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)))
+	if r == 0 {
+		return ""
+	}
+	return windows.UTF16ToString(buf)
+}

@@ -30,6 +30,7 @@ import (
 	"bimonitor/internal/desktop"
 	"bimonitor/internal/logging"
 	"bimonitor/internal/paths"
+	"bimonitor/internal/teamstore"
 	"bimonitor/internal/winapi"
 )
 
@@ -77,7 +78,12 @@ func main() {
 
 	sh := desktop.New()
 	sh.Debug = *debug
-	a, err := app.New(sh, app.Options{SettingsPath: paths.SettingsFile(), HistoryPath: paths.HistoryFile()})
+	a, err := app.New(sh, app.Options{
+		SettingsPath: paths.SettingsFile(),
+		HistoryPath:  paths.HistoryFile(),
+		LocalDir:     paths.LocalDir(),
+		Identity:     teamstore.Identity{Display: winapi.UserDisplayName()},
+	})
 	if err != nil {
 		winapi.MessageBox(0, branding.Current.AppName, "Az alkalmazás nem indítható:\n"+err.Error(), winapi.MB_ICONERROR)
 		os.Exit(1)

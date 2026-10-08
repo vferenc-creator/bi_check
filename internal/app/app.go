@@ -20,6 +20,7 @@ import (
 	"bimonitor/internal/model"
 	"bimonitor/internal/notify"
 	"bimonitor/internal/store"
+	"bimonitor/internal/teamstore"
 )
 
 // Version is set at build time (-ldflags "-X bimonitor/internal/app.Version=1.2.3").
@@ -54,6 +55,9 @@ type App struct {
 	shared  map[string]*sharedState // loaded shared team lists
 	memMeta map[string]string       // meta storage when the history DB is unavailable
 
+	opt  Options
+	team *teamStateT
+
 	// OnCall, if set, is invoked before every RPC (used by --selftest).
 	OnCall func(method string)
 }
@@ -68,6 +72,10 @@ type Options struct {
 	SettingsPath string
 	HistoryPath  string
 	Location     *time.Location
+	// LocalDir is the machine-local data folder (shared-mode cache).
+	LocalDir string
+	// Identity of the user/PC for the shared mode (defaults from env).
+	Identity teamstore.Identity
 }
 
 // New loads the settings and prepares the app (call Start to begin monitoring).
@@ -80,7 +88,8 @@ func New(p Platform, opt Options) (*App, error) {
 	if loc == nil {
 		loc = loadBudapest()
 	}
-	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}, stop: make(chan struct{}), memMeta: map[string]string{}, shared: map[string]*sharedState{}}
+	a := &App{P: p, Settings: st, Loc: loc, handlers: map[string]handler{}, stop: make(chan struct{}), memMeta: map[string]string{}, shared: map[string]*sharedState{}, opt: opt}
+	a.opt.Identity = defaultIdentity(opt.Identity)
 	if opt.HistoryPath != "" {
 		h, err := store.OpenHistory(opt.HistoryPath)
 		if err != nil {
@@ -115,6 +124,7 @@ func New(p Platform, opt Options) (*App, error) {
 	a.registerTransferAPI()
 	a.registerEmailAPI()
 	a.registerTeamAPI()
+	a.registerSharedModeAPI()
 	return a, nil
 }
 
@@ -139,10 +149,14 @@ func (a *App) Start() {
 	}()
 	go a.Engine.Run(ctx)
 	go a.background(a.stop)
+	if s := a.Settings.Get(); s.Team.Enabled && s.Team.Folder != "" {
+		a.startTeam(s.Team)
+	}
 }
 
 // Close stops background work.
 func (a *App) Close() {
+	a.stopTeam() // releases our edit locks on the share
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -162,9 +176,9 @@ func (a *App) Close() {
 // reconfigure pushes the current settings into the engine.
 func (a *App) reconfigure() {
 	s := a.Settings.Get()
+	cal := calendar.New(a.calendarOverrides(s))
 	a.mu.Lock()
-	a.cal = calendar.New(s.Calendar)
-	cal := a.cal
+	a.cal = cal
 	a.mu.Unlock()
 	a.Checker.SetTimeout(time.Duration(s.TimeoutSec) * time.Second)
 	a.Engine.Configure(a.effectiveItems(s), cal, time.Duration(s.CheckIntervalSec)*time.Second, s.Parallelism)

@@ -299,3 +299,5 @@ func TestSampleListIsValid(t *testing.T) {
 		}
 	}
 }
+
+func sleepMs(n int) { time.Sleep(time.Duration(n) * time.Millisecond) }

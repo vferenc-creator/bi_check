@@ -25,6 +25,16 @@ const (
 	StatusDisabled    Status = "disabled"    // switched off by the user
 )
 
+// GroupMuted reports whether the user muted a group.
+func (s *Settings) GroupMuted(group string) bool {
+	for _, g := range s.MutedGroups {
+		if g == group {
+			return true
+		}
+	}
+	return false
+}
+
 // Severity groups statuses for the tray icon and notifications.
 type Severity int
 
@@ -199,6 +209,18 @@ type SharedList struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// TeamSettings configure the shared ("közös") mode.
+type TeamSettings struct {
+	Enabled bool   `json:"enabled"`
+	Folder  string `json:"folder"`  // UNC path of the shared folder
+	PollSec int    `json:"pollSec"` // how often the folder is re-read
+	// LockTTLMin: an edit lock without heartbeat for this long is orphaned.
+	LockTTLMin int `json:"lockTtlMin"`
+	// ToastOnChanges: Windows notification when someone else changes a report
+	// (the in-app notice is always shown).
+	ToastOnChanges bool `json:"toastOnChanges"`
+}
+
 // ItemOverride stores personal settings for items of shared lists.
 type ItemOverride struct {
 	Disabled bool `json:"disabled,omitempty"`
@@ -223,6 +245,9 @@ type Settings struct {
 	Calendar      calendar.Overrides      `json:"calendar"`
 	SharedLists   []SharedList            `json:"sharedLists,omitempty"`
 	Overrides     map[string]ItemOverride `json:"overrides,omitempty"`
+	// MutedGroups: personal – no notifications for reports of these groups.
+	MutedGroups []string     `json:"mutedGroups,omitempty"`
+	Team        TeamSettings `json:"team"`
 
 	Items []Item `json:"items"`
 }
@@ -286,6 +311,12 @@ func (s *Settings) Normalize() {
 	}
 	if s.Items == nil {
 		s.Items = []Item{}
+	}
+	if s.Team.PollSec < 5 {
+		s.Team.PollSec = 30
+	}
+	if s.Team.LockTTLMin < 1 {
+		s.Team.LockTTLMin = 10
 	}
 	for i := range s.Items {
 		if s.Items[i].ID == "" {
