@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{APPNAME}}</title>
+<style>{{BRANDVARS}}</style>
+<style>{{STYLES}}</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="{{ICON}}" alt="">
+    <div><div class="t1">{{APPNAME}}</div><div class="t2">{{COMPANY}}</div></div>
+  </div>
+  <div class="summary" id="summary"></div>
+  <div class="grow"></div>
+  <label class="search" id="searchBox"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="search" placeholder="Keresés (név, útvonal, felelős)…" autocomplete="off"></label>
+  <button class="btn ghost" id="btnCheckAll" title="Összes elem ellenőrzése most (F5)"></button>
+  <button class="btn primary" id="btnNew" title="Új figyelt elem (Ctrl+N)"></button>
+</header>
+<div class="layout">
+  <nav class="sidebar" id="sidebar"></nav>
+  <main id="main"></main>
+</div>
+<aside class="drawer" id="drawer"></aside>
+<div id="toasts"></div>
+<script>window.__ICON = "{{ICON}}";</script>
+<script>{{SCRIPT}}</script>
+</body>
+</html>

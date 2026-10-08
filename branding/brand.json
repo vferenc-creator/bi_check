@@ -1,0 +1,27 @@
+{
+  "appName": "BI Output Monitor",
+  "shortName": "BI Monitor",
+  "company": "Energofish Kft.",
+  "appId": "Energofish.BIOutputMonitor",
+  "dataFolder": "EnergofishMonitor",
+  "copyright": "© Energofish Kft.",
+  "colors": {
+    "primary": "#1E1B1F",
+    "primaryDark": "#121013",
+    "accent": "#F2A531",
+    "background": "#F5F5F4",
+    "surface": "#FFFFFF",
+    "text": "#1E1B1F",
+    "muted": "#6B6770",
+    "border": "#E4E2E0",
+    "ok": "#2E9E5B",
+    "late": "#D99A00",
+    "missing": "#D64545",
+    "unreachable": "#7C5CC4",
+    "suspicious": "#E07400",
+    "waiting": "#5A8DB8",
+    "disabled": "#9AA5B1",
+    "accentDark": "#D98A12",
+    "iconBackground": "#FFFFFF"
+  }
+}
