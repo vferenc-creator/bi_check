@@ -39,7 +39,6 @@ type Notice struct {
 	Server        string
 	ServerProblem bool
 	Toast         bool // show a desktop notification
-	Email         bool // send an e-mail
 	At            time.Time
 	// For KindQuietSummary: the still-open problems.
 	Items []engine.ItemState
@@ -147,11 +146,10 @@ func (p *Policy) OnTransition(ev engine.Event, s model.Settings, muted bool, now
 			return nil
 		}
 		toast := ToastsAllowed(s, now)
-		email := s.Email.Enabled && s.Email.OnProblems
 		if !toast && s.Notifications.Enabled {
 			p.suppressed[id] = true
 		}
-		if !toast && !email && !p.suppressed[id] {
+		if !toast && !p.suppressed[id] {
 			return nil
 		}
 		keys := key
@@ -160,7 +158,7 @@ func (p *Policy) OnTransition(ev engine.Event, s model.Settings, muted bool, now
 		}
 		p.setIncident(id, &store.Incident{Key: keys, Status: string(ns.Status), At: now})
 		return []Notice{{Kind: KindProblem, Item: it, Status: ns.Status, Reason: ns.Reason, Server: ns.Server,
-			ServerProblem: ns.ServerProblem, Toast: toast, Email: email, At: now}}
+			ServerProblem: ns.ServerProblem, Toast: toast, At: now}}
 	}
 
 	switch ns.Status {
@@ -176,11 +174,10 @@ func (p *Policy) OnTransition(ev engine.Event, s model.Settings, muted bool, now
 			return nil
 		}
 		toast := s.Notifications.OnRecovery && ToastsAllowed(s, now) && !wasSuppressed
-		email := s.Email.Enabled && s.Email.OnRecovery
-		if !toast && !email {
+		if !toast {
 			return nil
 		}
-		return []Notice{{Kind: KindRecovery, Item: it, Status: ns.Status, Reason: ns.Reason, Toast: toast, Email: email, At: now}}
+		return []Notice{{Kind: KindRecovery, Item: it, Status: ns.Status, Reason: ns.Reason, Toast: toast, At: now}}
 	case model.StatusLate:
 		// Late without OnLate: keep any incident (e.g. a new expectation
 		// after a missing one will get its own key later).

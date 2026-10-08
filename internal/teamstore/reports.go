@@ -233,7 +233,7 @@ func ChangedFields(a, b model.Item) []string {
 		{"név", a.Name, b.Name}, {"csoport", a.Group, b.Group}, {"felelős", a.Owner, b.Owner}, {"megjegyzés", a.Note, b.Note},
 		{"útvonal", a.Path, b.Path}, {"dátum token", a.Token, b.Token}, {"ütemezés", a.Schedule, b.Schedule},
 		{"türelmi idő", a.GraceMinutes, b.GraceMinutes}, {"korai tolerancia", a.EarlyMinutes, b.EarlyMinutes},
-		{"gyanússági szabályok", a.Suspicious, b.Suspicious}, {"figyelés be/ki", a.Enabled, b.Enabled}, {"e-mail címzettek", a.EmailTo, b.EmailTo},
+		{"gyanússági szabályok", a.Suspicious, b.Suspicious}, {"figyelés be/ki", a.Enabled, b.Enabled},
 	}
 	var out []string
 	for _, x := range fs {

@@ -4,7 +4,7 @@ Windows-os tálcaalkalmazás az Energofish Kft. BI/kontrolling csapatának. Figy
 
 - egyetlen hordozható `BIMonitor.exe`, telepítő és admin jog nélkül
 - a háttérben fut, a tálcaikon színe mutatja az összesített állapotot
-- natív Windows értesítések (és opcionálisan e-mail), ismétlés nélkül
+- natív Windows értesítések, ismétlés nélkül
 - óránkénti, napi, heti, munkanapos (magyar munkaszüneti napokkal), havi és cron ütemezés
 - konkrét fájl vagy minta (`sales_*.parquet`, `riport_{yyyyMMdd}.xlsx`)
 - előzmények, pontossági statisztika, eseménynapló, közös csapatlista
@@ -34,12 +34,11 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
 8. [Közös mód (csapat)](#közös-mód-csapat) · [Import/export](#importexport)
-9. [E-mail](#e-mail)
-10. [Munkaszüneti napok](#munkaszüneti-napok)
-11. [Hol vannak a beállítások?](#hol-vannak-a-beállítások)
-12. [Parancssori kapcsolók](#parancssori-kapcsolók)
-13. [Hibaelhárítás](#hibaelhárítás)
-14. [Fejlesztőknek](#fejlesztőknek)
+9. [Munkaszüneti napok](#munkaszüneti-napok)
+10. [Hol vannak a beállítások?](#hol-vannak-a-beállítások)
+11. [Parancssori kapcsolók](#parancssori-kapcsolók)
+12. [Hibaelhárítás](#hibaelhárítás)
+13. [Fejlesztőknek](#fejlesztőknek)
 
 ---
 
@@ -200,7 +199,7 @@ Közös módban a figyelt riportok listája **egy hálózati mappában** van (pl
 
 | Közös (a közös mappában) | Személyes (a saját gépen) |
 |---|---|
-| a riportok összes beállítása (útvonal, ütemezés, türelmi idő, gyanússági szabályok, csoport, felelős, megjegyzés, extra e-mail címzettek), a figyelés be/ki kapcsolása | **kiről kér értesítést** (riportonként a részletpanelen, csoportonként a *Beállítások → Értesítések* alatt), csendes időszak, szünet, automatikus indulás, ablak, SMTP, nyugtázás, előzmények |
+| a riportok összes beállítása (útvonal, ütemezés, türelmi idő, gyanússági szabályok, csoport, felelős, megjegyzés), a figyelés be/ki kapcsolása | **kiről kér értesítést** (riportonként a részletpanelen, csoportonként a *Beállítások → Értesítések* alatt), csendes időszak, szünet, automatikus indulás, ablak, nyugtázás, előzmények |
 
 **Szerkesztés és zárolás**
 - Amikor valaki megnyit egy riportot szerkesztésre, a riport a többiek számára **zárolt**. Náluk lakat ikon és „Szerkeszti: Kiss Anna (EF-PC12), 10:42 óta” felirat látszik. Megnézni lehet, szerkeszteni nem.
@@ -239,17 +238,6 @@ locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az �
 - **JSON:** teljes, visszatölthető formátum.
 - **CSV:** pontosvesszővel tagolt, UTF-8, Excelben közvetlenül megnyitható. Szerkeszthető, majd visszaimportálható.
 - Importáláskor előnézet látható: az azonos azonosítójú vagy azonos útvonalú elemek **frissülnek**, a többi **új** elem lesz, a hibás sorokat a program jelzi. Közös módban az import a közös listába kerül.
-
----
-
-## E-mail
-
-**E-mail (SMTP)** – Beállítások → E-mail értesítés:
-- szerver, port, titkosítás (STARTTLS / TLS / nincs), felhasználónév és jelszó (belső relay esetén üresen hagyható), feladó, címzettek (pontosvesszővel elválasztva);
-- a jelszót a program **Windows DPAPI**-val titkosítva tárolja: csak ugyanaz a felhasználó tudja visszafejteni ugyanazon a gépen;
-- elemenként további címzettek is megadhatók (szerkesztő → *További e-mail címzettek*), ők csak az adott elemről kapnak levelet;
-- a **Próbaüzenet** gombbal kipróbálható;
-- a csendes időszak az e-mailekre nem vonatkozik.
 
 ---
 
@@ -318,7 +306,7 @@ Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
 ### Technológia és indoklás
 - **Go** (1.24) a backendhez: egyetlen statikus exe, kicsi memóriaigény, kiváló párhuzamosság a hálózati ellenőrzésekhez. Cgo nélkül, így bármilyen OS-ről fordítható Windowsra.
 - **WebView2** felület (`github.com/jchv/go-webview2/pkg/edge`, tiszta Go) **vanilla JS/CSS** frontenddel, build lépés nélkül. Az ablak csak megnyitáskor jön létre és bezáráskor felszabadul, így a háttérben nem fogyaszt böngészőmemóriát.
-- **Saját Win32 réteg** (`golang.org/x/sys/windows`): tálcaikon, menü, fájlválasztó, registry, `WNetGetConnection`, DPAPI, egypéldányos futás. Nincs harmadik féltől származó tálcakönyvtár, ami ütközne az üzenetkezelő ciklussal.
+- **Saját Win32 réteg** (`golang.org/x/sys/windows`): tálcaikon, menü, fájlválasztó, registry, `WNetGetConnection`, egypéldányos futás. Nincs harmadik féltől származó tálcakönyvtár, ami ütközne az üzenetkezelő ciklussal.
 - **Adattárolás:** `settings.json` (atomikus írás) a beállításokhoz, **SQLite** (`modernc.org/sqlite`, tiszta Go) az előzményekhez.
 - A JS ↔ Go kommunikáció WebView2 üzenetekkel történik, nincs helyi HTTP port, így tűzfal-felugró ablak sincs.
 
@@ -334,7 +322,6 @@ internal/checker/    fájlellenőrzés: timeout, szerverenkénti circuit breaker
 internal/status/     állapot-kiértékelés (OK/Késik/Hiányzik/Elérhetetlen/Gyanús)
 internal/engine/     háttérütemező: mikor mit kell ellenőrizni
 internal/notify/     értesítési szabályok (ismétlésgátlás, csendes időszak, összevonás)
-internal/mailer/     SMTP küldés
 internal/store/      settings.json + history.db
 internal/teamstore/  ★ közös mód: riportfájlok, zárolás, ütközéskezelés, offline gyorsítótár – párhuzamos tesztekkel
 internal/app/        platformfüggetlen alkalmazásmag + a felület RPC API-ja

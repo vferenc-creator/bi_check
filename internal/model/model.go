@@ -110,9 +110,8 @@ type Item struct {
 	EarlyMinutes int             `json:"earlyMinutes"`
 	Suspicious   SuspiciousRules `json:"suspicious"`
 
-	Enabled bool   `json:"enabled"`
-	Notify  bool   `json:"notify"`
-	EmailTo string `json:"emailTo,omitempty"` // extra recipients, comma separated
+	Enabled bool `json:"enabled"`
+	Notify  bool `json:"notify"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -176,20 +175,6 @@ type NotificationSettings struct {
 	PausedUntil time.Time `json:"pausedUntil,omitempty"`
 }
 
-// EmailSettings for optional SMTP notifications.
-type EmailSettings struct {
-	Enabled     bool     `json:"enabled"`
-	Host        string   `json:"host"`
-	Port        int      `json:"port"`
-	Security    string   `json:"security"` // "starttls" | "tls" | "none"
-	Username    string   `json:"username,omitempty"`
-	PasswordEnc string   `json:"passwordEnc,omitempty"` // DPAPI-protected, base64
-	From        string   `json:"from"`
-	To          []string `json:"to"`
-	OnProblems  bool     `json:"onProblems"` // send an e-mail for each new problem
-	OnRecovery  bool     `json:"onRecovery"`
-}
-
 // SharedList is a team-maintained JSON list on a network share.
 type SharedList struct {
 	ID      string `json:"id"`
@@ -229,7 +214,6 @@ type Settings struct {
 	Theme            string `json:"theme"` // "system" | "light" | "dark"
 
 	Notifications NotificationSettings    `json:"notifications"`
-	Email         EmailSettings           `json:"email"`
 	SharedLists   []SharedList            `json:"sharedLists,omitempty"`
 	Overrides     map[string]ItemOverride `json:"overrides,omitempty"`
 	// MutedGroups: personal – no notifications for reports of these groups.
@@ -257,7 +241,6 @@ func DefaultSettings() Settings {
 			OnRecovery: true,
 			Quiet:      QuietHours{From: "22:00", To: "06:00"},
 		},
-		Email: EmailSettings{Port: 25, Security: "starttls", OnProblems: true},
 		Items: []Item{},
 	}
 }
@@ -285,12 +268,6 @@ func (s *Settings) Normalize() {
 	}
 	if s.Notifications.Quiet.To == "" {
 		s.Notifications.Quiet.To = d.Notifications.Quiet.To
-	}
-	if s.Email.Port == 0 {
-		s.Email.Port = d.Email.Port
-	}
-	if s.Email.Security == "" {
-		s.Email.Security = d.Email.Security
 	}
 	if s.Items == nil {
 		s.Items = []Item{}

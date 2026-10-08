@@ -91,7 +91,6 @@ const ICONS = {
   download: '<path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
-  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
   ack: '<path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z"/><path d="m8 12 3 3 5-6"/>',
   open: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   test: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/>',
@@ -864,7 +863,7 @@ async function openEditor(item) {
           h("div", { class: "grid2" },
             field("Név *", text(it, "name", { id: "ed-name", placeholder: "pl. Napi értékesítési export" })),
             field("Csoport", text(it, "group", { list: "ed-groups", placeholder: "pl. KNIME" })),
-            field("Felelős", text(it, "owner", { placeholder: "név vagy e-mail" })),
+            field("Felelős", text(it, "owner", { placeholder: "pl. Kiss Anna" })),
             field("Megjegyzés", text(it, "note", { placeholder: "pl. KNIME workflow neve, teendő hiba esetén" }))),
           h("datalist", { id: "ed-groups" }, S.groups.map(g => h("option", { value: g })))),
         h("fieldset", {}, h("legend", {}, "Útvonal"),
@@ -881,8 +880,7 @@ async function openEditor(item) {
             field("Minimális méret (KB)", h("input", { class: "input narrow", type: "number", min: 0, value: minKB.v, oninput: e => { sus.minBytes = (parseInt(e.target.value, 10) || 0) * 1024; } })),
             field("Méretcsökkenés küszöb (%)", number(sus, "dropPercent", { min: 0, max: 99 }), "a szokásos mérethez képest; 0 = ki"))),
         h("fieldset", {}, h("legend", {}, "Működés"),
-          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", team ? "Értesítés nekem (személyes beállítás)" : "Értesítés erről az elemről")),
-          h("div", { style: { marginTop: "12px" } }, field("További e-mail címzettek", text(it, "emailTo", { placeholder: "pl. felelos@energofish.hu (csak erről az elemről kap levelet)" }), "Az SMTP beállítások bekapcsolása esetén."))),
+          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", team ? "Értesítés nekem (személyes beállítás)" : "Értesítés erről az elemről"))),
         errBox,
       ),
       h("div", { class: "side" }, preview,
@@ -920,7 +918,7 @@ async function openEditor(item) {
       case "név": return x.name; case "csoport": return x.group; case "felelős": return x.owner; case "megjegyzés": return x.note;
       case "útvonal": return x.path; case "dátum token": return x.tokenMode === "any" ? "bármilyen dátum" : "elvárt nap";
       case "türelmi idő": return x.graceMinutes + " perc"; case "korai tolerancia": return x.earlyMinutes + " perc";
-      case "figyelés be/ki": return x.enabled ? "bekapcsolva" : "kikapcsolva"; case "e-mail címzettek": return x.emailTo;
+      case "figyelés be/ki": return x.enabled ? "bekapcsolva" : "kikapcsolva";
       case "gyanússági szabályok": return (x.suspicious.zeroBytes ? "0 bájt gyanús, " : "") + "min. " + Math.round((x.suspicious.minBytes || 0) / 1024) + " KB, csökkenés " + (x.suspicious.dropPercent || 0) + "%";
       case "ütemezés": return JSON.stringify(x.schedule);
     }
@@ -1369,34 +1367,8 @@ views.settings = main => {
   }
 };
 
-// ---- Settings: e-mail, shared mode, data
+// ---- Settings: shared mode, data
 function settingsExtra(grid, s, row, sw, num, timeIn) {
-  const e = s.email;
-  S.emailDraft = { email: e, newPassword: null };
-  const inp = (obj, key, attrs) => h("input", Object.assign({ class: "input", value: obj[key] || "", oninput: ev => { obj[key] = ev.target.value; } }, attrs || {}));
-  const pw = h("input", { class: "input", type: "password", placeholder: e.passwordEnc ? "•••••• (tárolva – üresen hagyva nem változik)" : "", oninput: ev => { S.emailDraft.newPassword = ev.target.value; } });
-  const toArea = h("textarea", { class: "input", rows: 2, placeholder: "bi-csapat@energofish.hu; kontrolling@energofish.hu", oninput: ev => { e.to = [ev.target.value]; } }, (e.to || []).join("; "));
-  grid.append(h("div", { class: "card" },
-    h("div", { class: "card-h" }, icon("mail"), h("h3", {}, "E-mail értesítés (SMTP)")),
-    h("div", { class: "card-b" },
-      row("E-mail küldése", "Hibákról e-mail a megadott címekre (a csendes időszak az e-mailekre nem vonatkozik).", sw(e, "enabled")),
-      h("div", { class: "grid2", style: { margin: "10px 0" } },
-        h("label", { class: "field" }, "SMTP szerver", inp(e, "host", { placeholder: "pl. mail.ef.local" })),
-        h("div", { class: "row" },
-          h("label", { class: "field" }, "Port", h("input", { class: "input narrow", type: "number", value: e.port, oninput: ev => { e.port = parseInt(ev.target.value, 10) || 25; } })),
-          h("label", { class: "field grow" }, "Titkosítás", h("select", { class: "input", onchange: ev => { e.security = ev.target.value; } },
-            [["starttls", "STARTTLS"], ["tls", "TLS (465)"], ["none", "nincs"]].map(([v, l]) => h("option", { value: v, selected: e.security === v }, l))))),
-        h("label", { class: "field" }, "Felhasználónév", inp(e, "username", { placeholder: "üres = nincs hitelesítés" })),
-        h("label", { class: "field" }, "Jelszó", pw, h("span", { class: "hint" }, "Windows DPAPI-val titkosítva tárolódik.")),
-        h("label", { class: "field" }, "Feladó", inp(e, "from", { placeholder: "bi-monitor@energofish.hu" })),
-        h("label", { class: "field" }, "Címzettek", toArea)),
-      row("Új problémákról", null, sw(e, "onProblems")),
-      row("Helyreállásról", null, sw(e, "onRecovery")),
-      row("Próbaüzenet", "Mentés után küld egy teszt e-mailt.", h("button", { class: "btn sm", onclick: async () => {
-        try { await saveAll(true); await api("sendTestEmail"); toast("Próbaüzenet elküldve."); } catch (err) { fail(err); }
-      } }, icon("mail"), "Küldés")),
-    )));
-
   const teamCard = h("div", { class: "card" });
   grid.prepend(teamCard);
   drawTeam(teamCard);
@@ -1419,8 +1391,6 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
 async function saveAll(silent) {
   const s = S.settingsDraft;
   S.settings = await api("saveSettings", s);
-  S.settings = await api("saveEmail", { email: S.emailDraft.email, newPassword: S.emailDraft.newPassword || null });
-  S.emailDraft.newPassword = null;
   applyTheme();
   if (!silent) toast("Beállítások mentve.");
 }

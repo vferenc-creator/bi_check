@@ -121,7 +121,6 @@ func New(p Platform, opt Options) (*App, error) {
 	a.registerItemAPI()
 	a.registerHistoryAPI()
 	a.registerTransferAPI()
-	a.registerEmailAPI()
 	a.registerTeamAPI()
 	a.registerSharedModeAPI()
 	return a, nil
@@ -346,7 +345,7 @@ func (a *App) registerAll() {
 			AppName:      branding.Current.AppName,
 			Company:      branding.Current.Company,
 			Version:      Version,
-			Settings:     redact(s),
+			Settings:     s,
 			SettingsPath: a.Settings.Path(),
 			Warning:      a.Settings.LoadWarning,
 		}, nil
@@ -376,13 +375,13 @@ func (a *App) registerAll() {
 			return nil
 		})
 		if err != nil {
-			return redact(s), err
+			return s, err
 		}
 		a.reconfigure()
 		if err := a.P.SetAutostart(s.Autostart); err != nil {
-			return redact(s), fmt.Errorf("az automatikus indítás beállítása nem sikerült: %w", err)
+			return s, fmt.Errorf("az automatikus indítás beállítása nem sikerült: %w", err)
 		}
-		return redact(s), nil
+		return s, nil
 	})
 
 	a.register("setAutostart", func(on bool) error {
@@ -410,14 +409,6 @@ func (a *App) registerAll() {
 	})
 }
 
-// redact removes secrets before sending settings to the UI.
-func redact(s model.Settings) model.Settings {
-	if s.Email.PasswordEnc != "" {
-		s.Email.PasswordEnc = "********"
-	}
-	return s
-}
-
 func dirOf(p string) string {
 	for i := len(p) - 1; i >= 0; i-- {
 		if p[i] == '\\' || p[i] == '/' {
@@ -432,5 +423,5 @@ func (a *App) PauseNotifications(t time.Time) {
 	if _, err := a.Settings.Update(func(s *model.Settings) error { s.Notifications.PausedUntil = t; return nil }); err != nil {
 		log.Printf("pause notifications: %v", err)
 	}
-	a.P.Push("settings", redact(a.Settings.Get()))
+	a.P.Push("settings", a.Settings.Get())
 }

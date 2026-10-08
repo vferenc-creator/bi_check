@@ -82,15 +82,6 @@ func (a *App) flushNotices() {
 		}
 		a.P.Notify(t.Title, t.Text, kind)
 	}
-	var mail []notify.Notice
-	for _, n := range ns {
-		if n.Email {
-			mail = append(mail, n)
-		}
-	}
-	if len(mail) > 0 {
-		go a.sendNoticeEmails(mail)
-	}
 }
 
 // background runs periodic housekeeping: quiet-hour summaries, uptime

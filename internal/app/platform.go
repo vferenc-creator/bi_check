@@ -36,9 +36,6 @@ type Platform interface {
 
 	SetAutostart(enabled bool) error
 	AutostartEnabled() bool
-
-	Protect(plain []byte) ([]byte, error)
-	Unprotect(enc []byte) ([]byte, error)
 }
 
 // NullPlatform does nothing; embed it in fakes.
@@ -57,5 +54,3 @@ func (NullPlatform) ShowInFolder(string) error                  { return nil }
 func (NullPlatform) ToUNC(p string) (string, bool)              { return p, false }
 func (NullPlatform) SetAutostart(bool) error                    { return nil }
 func (NullPlatform) AutostartEnabled() bool                     { return false }
-func (NullPlatform) Protect(b []byte) ([]byte, error)           { return b, nil }
-func (NullPlatform) Unprotect(b []byte) ([]byte, error)         { return b, nil }

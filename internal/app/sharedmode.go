@@ -17,7 +17,7 @@ import (
 
 // Shared ("közös") mode: the report definitions live in a folder on the
 // network share (see internal/teamstore); everything personal – which
-// reports notify me, quiet hours, autostart, SMTP – stays in settings.json.
+// reports notify me, quiet hours, autostart – stays in settings.json.
 
 type teamStateT struct {
 	store  *teamstore.Store

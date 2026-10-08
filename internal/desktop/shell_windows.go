@@ -379,9 +379,3 @@ func (sh *Shell) SetAutostart(on bool) error { return winapi.SetAutostart(Autost
 
 // AutostartEnabled reports whether the Run value exists.
 func (sh *Shell) AutostartEnabled() bool { return winapi.GetAutostart(AutostartValueName) != "" }
-
-// Protect encrypts with DPAPI.
-func (sh *Shell) Protect(b []byte) ([]byte, error) { return winapi.Protect(b) }
-
-// Unprotect decrypts with DPAPI.
-func (sh *Shell) Unprotect(b []byte) ([]byte, error) { return winapi.Unprotect(b) }

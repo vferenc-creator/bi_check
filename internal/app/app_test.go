@@ -234,28 +234,6 @@ func TestSharedList(t *testing.T) {
 	}
 }
 
-func TestEmailPasswordIsProtected(t *testing.T) {
-	a, _, _ := newTestApp(t)
-	pw := "titok"
-	s := call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "smtp.ef.local", Port: 25, From: "bi@energofish.hu", To: []string{"a@x.hu; b@x.hu"}}, NewPassword: &pw})
-	if s.Email.PasswordEnc != "********" || len(s.Email.To) != 2 {
-		t.Fatalf("redacted/split: %+v", s.Email)
-	}
-	raw := a.Settings.Get().Email.PasswordEnc
-	if raw == "" || strings.Contains(raw, pw) {
-		t.Fatal("password must be stored encoded")
-	}
-	cfg, err := a.mailConfig(a.Settings.Get())
-	if err != nil || cfg.Password != pw {
-		t.Fatal(err, cfg.Password)
-	}
-	// Saving without a new password keeps the old one.
-	call[model.Settings](t, a, "saveEmail", EmailPatch{Email: model.EmailSettings{Enabled: true, Host: "h"}})
-	if a.Settings.Get().Email.PasswordEnc != raw {
-		t.Fatal("password lost")
-	}
-}
-
 // The sample list attached to every release must stay importable.
 func TestSampleListIsValid(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "BIMonitor_minta_elemek.json"))
