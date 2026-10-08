@@ -895,7 +895,7 @@ async function openEditor(item) {
           h("div", { class: "grid3" },
             h("div", { class: "field" }, "Üres fájl", h("div", { class: "ctrl-h" }, sw(sus, "zeroBytes", "0 bájtos fájl gyanús"))),
             field("Minimális méret (KB)", h("input", { class: "input narrow", type: "number", min: 0, value: minKB.v, oninput: e => { sus.minBytes = (parseInt(e.target.value, 10) || 0) * 1024; } })),
-            field("Méretcsökkenés küszöb (%)", number(sus, "dropPercent", { min: 0, max: 99 }), "a szokásos mérethez képest; 0 = ki"))),
+            field("Méretcsökkenés (%)", number(sus, "dropPercent", { min: 0, max: 99 }), "a szokásos mérethez képest; 0 = ki"))),
         h("fieldset", {}, h("legend", {}, "Működés"),
           h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", team ? "Értesítés nekem (személyes beállítás)" : "Értesítés erről az elemről"))),
         errBox,

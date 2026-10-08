@@ -226,10 +226,11 @@ textarea.input { height: auto; min-height: 64px; padding: 8px 10px; resize: vert
 .table .meta .group-tag, .table .meta .shared-tag, .table .meta .new-tag { margin-left: 0; }
 .table .meta .owner { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .table .meta .mute-ic { margin-left: 0; vertical-align: -3px; }
-.status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.status-cell .pill { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .status-cell .group-tag { margin-left: 0; }
 .table .path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-.table col.c-status { width: 132px; } .table col.c-name { width: 24%; } .table col.c-sched { width: 15%; } .table col.c-when { width: 124px; } .table col.c-acts { width: 112px; }
+.table col.c-status { width: 140px; } .table col.c-name { width: 24%; } .table col.c-sched { width: 15%; } .table col.c-when { width: 124px; } .table col.c-acts { width: 112px; }
 .table col.c-name.wide { width: auto; }
 .table td { overflow: hidden; }
 .table .when { white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -318,8 +319,7 @@ svg.spark { width: 100%; height: 56px; }
   .editor { grid-template-columns: 1fr; }
 }
 @media (max-width: 1000px) {
-  .table col.c-status { width: 124px; }
-  .table col.c-when { width: 100px; }
+  .table col.c-when { width: 114px; }
   .table col.c-acts { width: 44px; }
   .table .acts .btn:not(:last-child) { display: none; }
   .topbar #btnCheckAll .lbl { display: none; }
