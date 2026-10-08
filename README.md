@@ -33,7 +33,7 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 5. [Állapotok](#állapotok)
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
-8. [Csapatmunka: import/export és közös lista](#csapatmunka-importexport-és-közös-lista)
+8. [Közös mód (csapat)](#közös-mód-csapat) · [Import/export](#importexport)
 9. [E-mail és napi összefoglaló](#e-mail-és-napi-összefoglaló)
 10. [Munkanaptár](#munkanaptár)
 11. [Hol vannak a beállítások?](#hol-vannak-a-beállítások)
@@ -181,18 +181,63 @@ Az **Eseménynapló** (bal oldali menü) az összes elem állapotváltozását m
 
 ---
 
-## Csapatmunka: import/export és közös lista
+## Közös mód (csapat)
+
+Közös módban a figyelt riportok listája **egy hálózati mappában** van (pl. `\\EFS-FSRHQ\Groups\BI\BI_Check_kozos`). Bárki felvehet, szerkeszthet vagy törölhet riportot, és ezt a többi gépen futó példány is látja és figyeli.
+
+| Ferenc gépe: Anna épp szerkeszti a „Vezetői riportot”, a „KPI”-t módosította | Zárolt riport megnyitása: csak megtekintés |
+|---|---|
+| ![Közös lista](docs/kozos-lista.png) | ![Zárolt riport](docs/kozos-zarolt.png) |
+
+**Bekapcsolás:** *Beállítások → Közös mód (csapat)*.
+1. Adja meg a mappát kézzel, vagy a **Tallózás** gombbal. A csatolt meghajtót (`M:\…`) a program UNC-re alakítja.
+2. Az **Ellenőrzés** gomb megnézi, hogy a mappa elérhető-e, írható-e, és hogy a zárolás működik-e rajta. Üres mappát a program előkészít.
+3. **Közös mód bekapcsolása** után a program felajánlja a saját riportok átmásolását. Ha egy riport már szerepel a közös listában (azonos azonosítóval vagy útvonallal), elemenként lehet választani: *kihagyás / másolás új riportként / a közös felülírása*. A saját lista nem törlődik: közös módban rejtve marad, kikapcsoláskor visszajön.
+
+**Mi közös és mi személyes?**
+
+| Közös (a közös mappában) | Személyes (a saját gépen) |
+|---|---|
+| a riportok összes beállítása (útvonal, ütemezés, türelmi idő, gyanússági szabályok, csoport, felelős, megjegyzés, extra e-mail címzettek), a figyelés be/ki kapcsolása, a **munkanaptár** | **kiről kér értesítést** (riportonként a részletpanelen, csoportonként a *Beállítások → Értesítések* alatt), csendes időszak, szünet, automatikus indulás, ablak, SMTP, napi összefoglaló, nyugtázás, előzmények |
+
+**Szerkesztés és zárolás**
+- Amikor valaki megnyit egy riportot szerkesztésre, a riport a többiek számára **zárolt**. Náluk lakat ikon és „Szerkeszti: Kiss Anna (EF-PC12), 10:42 óta” felirat látszik. Megnézni lehet, szerkeszteni nem.
+- A zár feloldódik mentéskor, a Mégse gombra, az ablak bezárásakor és kilépéskor.
+- **Elárvult zár:** lefagyott program, kikapcsolt gép vagy megszakadt hálózat esetén a zár életjele nem frissül. A beállítható ideje (alapból 10 perce) nem frissült zár lejártnak számít, és a következő szerkesztő automatikusan átveszi. A saját, összeomlás előtti zárát a program induláskor azonnal feloldja.
+- **Kézi „Zár feloldása”:** megerősítést kér, és bekerül a riport változásnaplójába.
+- **Ütközés:** ha a riport a megnyitás óta megváltozott a közös mappában (például feloldották a zárat és más mentett), a program nem írja felül csendben. Megmutatja a mezőnkénti eltérést, és rákérdez: *Az enyémet mentem / Az övét tartom meg / Vissza a szerkesztéshez*.
+- A figyelés zárolás alatt is fut, az utolsó mentett definícióval.
+
+![Ütközés](docs/kozos-utkozes.png)
+
+**Változások követése**
+- A program beállítható időközönként (alapból 30 mp-enként) újraolvassa a közös mappát. A **Frissítés** gombbal azonnal is lehet.
+- Mások változtatásairól diszkrét jelzés jön („Új riport: X – felvette: Y”), a listában pedig „új / módosítva” címke. Kérésre Windows-értesítés is jöhet.
+- **Lomtár:** a törölt riport a lomtárba kerül (ki és mikor törölte), onnan visszaállítható vagy véglegesen törölhető.
+- **Változásnapló** riportonként a részletpanelen: ki, mikor, gépről, mit módosított (mezők szerint).
+
+**Offline mód:** ha a közös mappa nem érhető el, a program a legutóbb beolvasott lista helyi gyorsítótárával figyel tovább. A szerkesztés ilyenkor tiltott, és egy sáv jelzi az offline állapotot. Amikor a mappa újra elérhető, a program automatikusan frissít.
+
+**Programverziók:** a közös mappában lévő `bicheck.json` tárolja a formátum verzióját. Ha a mappát egy újabb programverzió kezeli, a régebbi csak olvasni tudja, és jelzi, hogy frissíteni kell. Közös módban ezért érdemes egyszerre frissíteni.
+
+**Hogyan van megoldva (a mappa tartalma)**
+```
+bicheck.json          formátumverzió (ne törölje)
+calendar.json         közös munkanaptár
+reports\<azonosító>.json   egy riport = egy fájl (verziószám, létrehozó, módosító, lomtár-jelölés, változásnapló)
+locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az életjel a fájl dátuma)
+```
+- Adatbázis szándékosan nincs: SMB-n az adatbázisfájlok zárolása nem megbízható.
+- Minden írás ideiglenes fájlba történik, majd egy lépésben a végleges névre cserélődik, így a másik gép soha nem olvas félig megírt fájlt.
+- A zárat a program „csak ha még nem létezik” módon hozza létre. Ezt a fájlszerver dönti el, ezért ketten sosem kaphatják meg egyszerre.
+- Két valódi gépen elvégzendő kézi tesztek: [docs/kozos-mod-kezi-teszt.md](docs/kozos-mod-kezi-teszt.md).
+
+## Import/export
 
 **Export / import** (lista fejléce vagy Beállítások → Adatok):
-- **JSON:** teljes, visszatölthető formátum; erre épül a közös lista is.
+- **JSON:** teljes, visszatölthető formátum.
 - **CSV:** pontosvesszővel tagolt, UTF-8, Excelben közvetlenül megnyitható. Szerkeszthető, majd visszaimportálható.
-- Importáláskor előnézet látható: az azonos azonosítójú vagy azonos útvonalú elemek **frissülnek**, a többi **új** elem lesz, a hibás sorokat a program jelzi.
-
-**Közös lista** (Beállítások → Közös listák):
-1. A lista gazdája összeállítja az elemeket, majd az **Export → JSON** funkcióval elmenti egy mindenki által olvasható helyre, például `\\EFS-FSRHQ\Groups\BI\monitor\csapat.json`.
-2. A kollégák a **Feliratkozás** gombbal felveszik ezt az útvonalat.
-3. A közös elemek „közös” címkével jelennek meg. Helyben **némíthatók**, **kikapcsolhatók** vagy **a saját listába másolhatók**, szerkeszteni csak a forrásfájlban lehet.
-4. A program néhány percenként megnézi, változott-e a fájl (azonnal: *Újratöltés* gomb). Ha a fájl hibás vagy épp nem érhető el, az utolsó jó verzió alapján figyel tovább.
+- Importáláskor előnézet látható: az azonos azonosítójú vagy azonos útvonalú elemek **frissülnek**, a többi **új** elem lesz, a hibás sorokat a program jelzi. Közös módban az import a közös listába kerül.
 
 ---
 
@@ -221,6 +266,8 @@ Az **Eseménynapló** (bal oldali menü) az összes elem állapotváltozását m
 
 A kódban az évenkénti adatok helye: `internal/calendar/transfers.go`.
 
+Közös módban a munkanaptár saját kiegészítései is közösek (`calendar.json` a közös mappában), így minden gép ugyanazokat a munkanapokat látja.
+
 ---
 
 ## Hol vannak a beállítások?
@@ -232,7 +279,9 @@ A kódban az évenkénti adatok helye: `internal/calendar/transfers.go`.
 | `%LOCALAPPDATA%\EnergofishMonitor\history.db` | előzmények (SQLite): érkezések, állapotváltozások, futási idő |
 | `%LOCALAPPDATA%\EnergofishMonitor\logs\monitor.log` | napló (5 MB-onként forgatva) |
 | `%LOCALAPPDATA%\EnergofishMonitor\WebView2\` | a felület böngészőmotorjának gyorsítótára |
+| `%LOCALAPPDATA%\EnergofishMonitor\shared-cache.json` | közös módban a közös lista helyi másolata (offline működéshez) |
 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\EnergofishBIMonitor` | automatikus indítás |
+| *közös mappa* (közös módban) | a riportdefiníciók, zárak, munkanaptár – lásd [Közös mód](#közös-mód-csapat) |
 
 A beállítások a roaming `APPDATA` alatt vannak, mert kicsik és a felhasználóhoz tartoznak. Az előzmények és a gyorsítótár a gépenkénti `LOCALAPPDATA` alatt vannak, mert SQLite adatbázist nem szabad vándorló profilban tartani.
 
@@ -260,6 +309,9 @@ Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
 - **Minden elem „Elérhetetlen”:** hálózati vagy VPN-probléma, illetve a szerver nem érhető el. A lista tetején látszik, melyik szerver esett ki. Nézze meg Intézőben, elérhető-e az útvonal.
 - **„Hozzáférés megtagadva”:** a bejelentkezett felhasználónak nincs olvasási joga a mappához.
 - **Rossz időpontok:** nézze meg a szerkesztő ütemezés-előnézetét és a munkanaptárat.
+- **Közös mód – „Szerkeszti: X”, de X már nem szerkeszti:** ha az életjel 10 perce nem frissült, a zár magától lejár. Ha sürgős, a *Zár feloldása* gombbal azonnal feloldható (ez naplózódik).
+- **Közös mód – offline sáv:** a közös mappa nem érhető el (VPN, hálózat, jogosultság). A figyelés közben fut tovább, visszatéréskor automatikusan frissül.
+- **Közös mód – „újabb programverzió kezeli”:** frissítse a BI Monitort a [legfrissebb kiadásra](https://github.com/vferenc-creator/bi_check/releases/latest).
 - **Napló:** `%LOCALAPPDATA%\EnergofishMonitor\logs\monitor.log`.
 
 ---
@@ -287,6 +339,7 @@ internal/engine/     háttérütemező: mikor mit kell ellenőrizni
 internal/notify/     értesítési szabályok (ismétlésgátlás, csendes időszak, összevonás)
 internal/mailer/     SMTP küldés
 internal/store/      settings.json + history.db
+internal/teamstore/  ★ közös mód: riportfájlok, zárolás, ütközéskezelés, offline gyorsítótár – párhuzamos tesztekkel
 internal/app/        platformfüggetlen alkalmazásmag + a felület RPC API-ja
 internal/desktop/    Windows héj: tálca, WebView2 ablak, értesítések
 internal/winapi/     Win32 hívások
