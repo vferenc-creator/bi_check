@@ -122,7 +122,14 @@ func (s *Store) Acquire(id string) (Lock, error) {
 		if err := os.MkdirAll(s.dir("locks"), 0o755); err != nil {
 			return err
 		}
-		for attempt := 0; attempt < 3; attempt++ {
+		// Several instances may race for an orphaned lock at the same moment.
+		// On Windows/SMB a file another instance is just reading, renaming
+		// or deleting answers with sharing violation / access denied for a
+		// few milliseconds: those are retried after a short random pause.
+		for attempt := 0; attempt < 10; attempt++ {
+			if attempt > 0 {
+				time.Sleep(backoffJitter(attempt))
+			}
 			err := s.createLock(id)
 			if err == nil {
 				l, rerr := s.readLock(id)
@@ -133,6 +140,9 @@ func (s *Store) Acquire(id string) (Lock, error) {
 				return nil
 			}
 			if !errors.Is(err, fs.ErrExist) {
+				if transientFS(err) {
+					continue
+				}
 				return err
 			}
 			cur, rerr := s.readLock(id)
@@ -140,6 +150,9 @@ func (s *Store) Acquire(id string) (Lock, error) {
 				continue // released meanwhile: try again
 			}
 			if rerr != nil {
+				if transientFS(rerr) {
+					continue
+				}
 				return rerr
 			}
 			if cur.Mine {
@@ -151,15 +164,15 @@ func (s *Store) Acquire(id string) (Lock, error) {
 				return &LockedError{Lock: cur}
 			}
 			// Orphaned lock: take it over under the exclusive break token.
-			broke, err := s.breakIfExpired(id)
-			if err != nil {
+			// If another instance is breaking it right now (broke=false),
+			// look again shortly: it either wins (live lock → LockedError)
+			// or fails and leaves the lock to us.
+			if _, err := s.breakIfExpired(id); err != nil && !transientFS(err) {
 				return err
 			}
-			if !broke {
-				if again, rerr := s.readLock(id); rerr == nil {
-					return &LockedError{Lock: again}
-				}
-			}
+		}
+		if cur, rerr := s.readLock(id); rerr == nil && !cur.Mine && !cur.Expired {
+			return &LockedError{Lock: cur}
 		}
 		return fmt.Errorf("a zár megszerzése nem sikerült (versenyhelyzet), próbálja újra")
 	})
@@ -236,7 +249,7 @@ func (s *Store) breakIfExpired(id string) (bool, error) {
 func (s *Store) breakLockFile(id string, cur Lock, why string) error {
 	p := s.lockPath(id)
 	broken := p + ".broken-" + s.now().Format("20060102-150405") + "-" + s.opt.Identity.Instance
-	if err := os.Rename(p, broken); err != nil {
+	if err := retry(func() error { return os.Rename(p, broken) }); err != nil {
 		return err
 	}
 	os.Remove(broken)

@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	mrand "math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"time"
 )
 
@@ -46,6 +49,26 @@ func withTimeout(d time.Duration, op func() error) error {
 	case <-time.After(d):
 		return errTimeout
 	}
+}
+
+// transientFS reports errors that typically clear within milliseconds on
+// Windows/SMB: sharing or lock violation and "access denied" on a file that
+// another process is renaming or deleting.
+func transientFS(err error) bool {
+	if errors.Is(err, fs.ErrPermission) {
+		return true
+	}
+	var errno syscall.Errno
+	if runtime.GOOS == "windows" && errors.As(err, &errno) {
+		return errno == 32 || errno == 33 // ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
+	}
+	return false
+}
+
+// backoffJitter is a short, randomised pause so racing instances do not
+// retry in lockstep.
+func backoffJitter(attempt int) time.Duration {
+	return time.Duration(10*attempt+mrand.IntN(40)) * time.Millisecond
 }
 
 // retry repeats op on errors other than "not exist"/"exist" – sharing
