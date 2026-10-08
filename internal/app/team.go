@@ -34,6 +34,7 @@ type SharedStatus struct {
 	LoadedAt time.Time `json:"loadedAt"`
 	ModTime  time.Time `json:"modTime"`
 	Error    string    `json:"error,omitempty"`
+	IsDir    bool      `json:"isDir"` // the path is a folder (old setting meant for shared mode)
 }
 
 func sharedID(listID, itemID string) string { return sharedPrefix + listID + ":" + itemID }
@@ -79,6 +80,10 @@ func readWithTimeout(path string, d time.Duration) ([]byte, time.Time, error) {
 		st, err := os.Stat(path)
 		if err != nil {
 			ch <- res{err: err}
+			return
+		}
+		if st.IsDir() {
+			ch <- res{err: errors.New("ez egy mappa, nem lista-fájl – közös szerkesztéshez a Közös módot használja (Beállítások → Közös mód), ott ez a mappa megadható")}
 			return
 		}
 		b, err := os.ReadFile(path)
@@ -157,7 +162,7 @@ func (a *App) sharedStatuses() []SharedStatus {
 	defer a.mu.Unlock()
 	out := []SharedStatus{}
 	for _, l := range s.SharedLists {
-		ss := SharedStatus{SharedList: l}
+		ss := SharedStatus{SharedList: l, IsDir: !strings.HasSuffix(strings.ToLower(l.Path), ".json")}
 		if st := a.shared[l.ID]; st != nil {
 			ss.Count, ss.LoadedAt, ss.ModTime, ss.Error = len(st.items), st.loadedAt, st.modTime, st.err
 		}
@@ -226,6 +231,25 @@ func (a *App) registerTeamAPI() {
 			}
 		}
 		if _, err := a.Settings.Update(func(s *model.Settings) error { s.SharedLists = lists; return nil }); err != nil {
+			return nil, err
+		}
+		a.refreshShared(true)
+		a.reconfigure()
+		return a.sharedStatuses(), nil
+	})
+
+	a.register("removeLegacyList", func(id string) ([]SharedStatus, error) {
+		_, err := a.Settings.Update(func(s *model.Settings) error {
+			var out []model.SharedList
+			for _, l := range s.SharedLists {
+				if l.ID != id {
+					out = append(out, l)
+				}
+			}
+			s.SharedLists = out
+			return nil
+		})
+		if err != nil {
 			return nil, err
 		}
 		a.refreshShared(true)

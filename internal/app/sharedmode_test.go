@@ -328,3 +328,22 @@ func contains(s []string, x string) bool {
 	}
 	return false
 }
+
+// Upgrading from v1.0.x where a FOLDER was entered as a read-only shared list.
+func TestLegacyFolderSubscription(t *testing.T) {
+	a, dir := newUserApp(t, "ferenc")
+	folder := filepath.Join(dir, "BI_monitor")
+	os.MkdirAll(folder, 0o755)
+	st := call[[]SharedStatus](t, a, "saveSharedLists", []model.SharedList{{Name: "BI_monitor", Path: folder, Enabled: true}})
+	if len(st) != 1 || !st[0].IsDir || !strings.Contains(st[0].Error, "Közös mód") {
+		t.Fatalf("folder must get a helpful message: %+v", st)
+	}
+	// One click: use it as the shared folder, drop the old subscription.
+	call[enableRes](t, a, "teamEnable", map[string]string{"folder": folder})
+	if left := call[[]SharedStatus](t, a, "removeLegacyList", st[0].ID); len(left) != 0 {
+		t.Fatalf("%+v", left)
+	}
+	if _, err := os.Stat(filepath.Join(folder, "bicheck.json")); err != nil {
+		t.Fatal("folder should be initialised for shared mode")
+	}
+}

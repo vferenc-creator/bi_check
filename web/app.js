@@ -1255,6 +1255,39 @@ async function drawTeam(card) {
       } }, "Kikapcsolás")));
 }
 
+// Old (v1.0.x) read-only "Közös listák" subscriptions: shown only so they can
+// be removed, or – if a folder was entered – turned into the shared folder.
+async function drawLegacyLists(card) {
+  let lists;
+  try { lists = await api("sharedLists"); } catch (e) { return fail(e); }
+  if (!lists.length) { card.remove(); return; }
+  clear(card).append(h("div", { class: "card-h" }, icon("info"), h("h3", {}, "Korábbi közös lista feliratkozás")));
+  const b = h("div", { class: "card-b" },
+    h("p", { class: "small muted", style: { marginTop: 0, lineHeight: 1.5 } },
+      "A korábbi verzió „Közös listák” funkcióját a Közös mód váltotta fel (fent). A régi feliratkozást törölheti; ha egy mappát adott meg, azt egy kattintással közös mappaként is használhatja."));
+  card.append(b);
+  for (const l of lists) {
+    b.append(h("div", { class: "setting-row" },
+      h("div", { class: "lbl" }, h("b", {}, l.name), h("span", { class: "mono" }, l.path),
+        l.error ? h("span", { style: { display: "block", color: "var(--missing)" } }, l.error) : null),
+      h("div", { class: "row wrap", style: { justifyContent: "flex-end" } },
+        l.isDir && !teamOn() ? h("button", { class: "btn sm primary", onclick: async () => {
+          try {
+            const r = await api("teamEnable", { folder: l.path });
+            await api("removeLegacyList", l.id);
+            S.settings = (await api("bootstrap")).settings;
+            await refresh();
+            toast("Közös mód bekapcsolva: " + r.check.folder);
+            if (r.migration && r.migration.length) migrationDialog(r.migration);
+            go("settings");
+          } catch (e) { fail(e); }
+        } }, icon("users"), "Közös mappaként használom") : null,
+        h("button", { class: "btn sm danger", onclick: async () => {
+          try { await api("removeLegacyList", l.id); S.settings = (await api("bootstrap")).settings; go("settings"); toast("Feliratkozás törölve."); } catch (e) { fail(e); }
+        } }, icon("trash"), "Törlés"))));
+  }
+}
+
 function migrationDialog(rows) {
   const ov = h("div", { class: "overlay" });
   const close = () => ov.remove();
@@ -1382,6 +1415,11 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
   const teamCard = h("div", { class: "card" });
   grid.prepend(teamCard);
   drawTeam(teamCard);
+  if ((S.settings.sharedLists || []).length) {
+    const legacy = h("div", { class: "card" });
+    teamCard.after(legacy);
+    drawLegacyLists(legacy);
+  }
 
   grid.append(h("div", { class: "card" },
     h("div", { class: "card-h" }, icon("folder"), h("h3", {}, "Adatok")),
