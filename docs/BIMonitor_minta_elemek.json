@@ -1,0 +1,73 @@
+{
+  "format": "energofish-bimonitor",
+  "version": 1,
+  "items": [
+    {
+      "id": "minta-knime-sales",
+      "name": "Értékesítési adatok (KNIME)",
+      "group": "KNIME",
+      "owner": "BI csapat",
+      "note": "KNIME Sales_Daily workflow – munkanapokon 6:00-ra kész",
+      "path": "\\\\EF-BI\\knime\\out\\sales_*.parquet",
+      "schedule": { "type": "workdays", "times": ["06:00"], "useHolidays": true },
+      "graceMinutes": 30,
+      "earlyMinutes": 30,
+      "suspicious": { "zeroBytes": true, "dropPercent": 70 },
+      "enabled": true,
+      "notify": true
+    },
+    {
+      "id": "minta-dyntell-sync",
+      "name": "DyntellBI szinkron státusz",
+      "group": "DyntellBI",
+      "owner": "BI csapat",
+      "path": "\\\\EF-BI\\dyntell\\sync_status.csv",
+      "schedule": { "type": "hourly", "intervalMinutes": 60, "from": "06:00", "to": "20:00", "days": "workdays" },
+      "graceMinutes": 15,
+      "earlyMinutes": 15,
+      "suspicious": { "zeroBytes": true },
+      "enabled": true,
+      "notify": true
+    },
+    {
+      "id": "minta-erp-export",
+      "name": "ERP éjszakai export",
+      "group": "ERP export",
+      "owner": "Kontrolling",
+      "note": "Hiba esetén: IT ügyelet",
+      "path": "\\\\EFS-FSRHQ\\Groups\\BI\\export\\erp_export.xlsx",
+      "schedule": { "type": "daily", "times": ["05:30"] },
+      "graceMinutes": 45,
+      "earlyMinutes": 60,
+      "suspicious": { "zeroBytes": true, "dropPercent": 70 },
+      "enabled": true,
+      "notify": true
+    },
+    {
+      "id": "minta-vezetoi-riport",
+      "name": "Vezetői riport",
+      "group": "Riport",
+      "owner": "Kontrolling",
+      "path": "\\\\EFS-FSRHQ\\Groups\\Kontrolling\\Riport\\vezetoi_riport_{yyyyMMdd}.xlsx",
+      "schedule": { "type": "workdays", "times": ["07:00"], "useHolidays": true },
+      "graceMinutes": 60,
+      "earlyMinutes": 30,
+      "suspicious": { "zeroBytes": true },
+      "enabled": true,
+      "notify": true
+    },
+    {
+      "id": "minta-havi-zaras",
+      "name": "Havi zárás",
+      "group": "Riport",
+      "owner": "Kontrolling",
+      "path": "\\\\EFS-FSRHQ\\Groups\\BI\\havi\\havi_zaras_{yyyy-MM:-1M}.xlsx",
+      "schedule": { "type": "monthly", "monthlyMode": "firstWorkday", "times": ["08:00"] },
+      "graceMinutes": 120,
+      "earlyMinutes": 0,
+      "suspicious": { "zeroBytes": true },
+      "enabled": true,
+      "notify": true
+    }
+  ]
+}

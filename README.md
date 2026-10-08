@@ -9,6 +9,13 @@ Windows-os tálcaalkalmazás az Energofish Kft. BI/kontrolling csapatának. Figy
 - konkrét fájl vagy minta (`sales_*.parquet`, `riport_{yyyyMMdd}.xlsx`)
 - előzmények, pontossági statisztika, eseménynapló, közös csapatlista
 
+## ⬇️ Letöltés
+
+**Mindig a legfrissebb verzió:** <https://github.com/vferenc-creator/bi_check/releases/latest>
+(közvetlen link az exe-re: <https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor.exe>)
+
+Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` + `BIMonitor_minta_elemek.json` mintalista).
+
 ![Figyelt elemek](docs/lista.png)
 
 | Részletek, előzmények, statisztika | Szerkesztő ütemezés-előnézettel és útvonalteszttel |
@@ -38,7 +45,7 @@ Windows-os tálcaalkalmazás az Energofish Kft. BI/kontrolling csapatának. Figy
 
 ## Telepítés
 
-1. Másolja a `BIMonitor.exe` fájlt egy állandó helyre, például `%LOCALAPPDATA%\Programs\BIMonitor\BIMonitor.exe` vagy `C:\Tools\BIMonitor\`. Ne a Letöltések mappából futtassa, mert az automatikus indítás erre az útvonalra mutat.
+1. Töltse le a `BIMonitor.exe`-t a [legfrissebb kiadásból](https://github.com/vferenc-creator/bi_check/releases/latest), és másolja egy állandó helyre, például `%LOCALAPPDATA%\Programs\BIMonitor\BIMonitor.exe` vagy `C:\Tools\BIMonitor\`. Ne a Letöltések mappából futtassa, mert az automatikus indítás erre az útvonalra mutat.
 2. Indítsa el. Az első indításkor:
    - létrejön a `%APPDATA%\EnergofishMonitor\settings.json`;
    - bekapcsol az **Indítás a Windows-zal** (kikapcsolható a Beállításokban vagy a tálcamenüben).
@@ -294,6 +301,14 @@ tools/genicon/       az ikon vektoros újrarajzolása
 ./build.sh 1.0.0                # Linux/macOS (keresztfordítás)
 ```
 Az eredmény a `dist\BIMonitor.exe`. A build előbb lefuttatja a `tools/genres`-t, ami a `branding/` alapján legenerálja az exe-be ágyazott ikont, a manifestet (PerMonitorV2 DPI, asInvoker) és a verzióinfót.
+
+### Kiadások (Releases)
+A `.github/workflows/build.yml` minden pushnál tesztel és buildel. A fő (alapértelmezett) ágra érkező, minden ellenőrzésen átment push után **automatikusan GitHub Release készül** „Latest” jelöléssel:
+- verziószám: a `VERSION` fájl (pl. `1.0`) + a build sorszáma → `v1.0.17`;
+- csatolmányok: `BIMonitor.exe` és a `docs/BIMonitor_minta_elemek.json` mintalista;
+- a kiadási megjegyzés sablonja: `.github/release-notes.md`, a változáslista az előző kiadás óta érkezett commitokból készül.
+
+Új fő/alverziónál (pl. 1.1) elég a `VERSION` fájlt átírni.
 
 ### Tesztek
 ```

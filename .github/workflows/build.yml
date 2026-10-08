@@ -1,7 +1,15 @@
 name: build
 
+# Every push is tested on Linux and Windows (incl. a GUI smoke test of the
+# real exe). Pushes to the default branch (or the development branch) that
+# pass all checks are published automatically as a GitHub Release marked
+# "Latest", so the newest exe is always at
+#   https://github.com/<owner>/<repo>/releases/latest
+# Version: <VERSION file>.<run number>, e.g. 1.0.17.
+
 on:
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -19,6 +27,8 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,14 +36,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $base = (Get-Content VERSION -Raw).Trim()
+          $v = "$base.${{ github.run_number }}"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v"
       - name: Unit tests (Windows time zone database & file system)
         run: go test ./...
       - name: Build
         shell: pwsh
-        run: |
-          $v = "0.0.0-ci.${{ github.run_number }}"
-          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}" }
-          ./build.ps1 -Version $v
+        run: ./build.ps1 -Version ${{ steps.ver.outputs.version }}
       - name: GUI smoke test (tray + WebView2 window + JS bridge)
         shell: pwsh
         run: |
@@ -48,3 +63,55 @@ jobs:
         with:
           name: BIMonitor-exe
           path: dist/BIMonitor.exe
+
+  release:
+    needs: [test-linux, windows]
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref_name == github.event.repository.default_branch ||
+       github.ref_name == 'claude/nifty-tesla-wqcp1f')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.windows.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: BIMonitor-exe
+          path: dist
+      - name: Release notes
+        run: |
+          prev=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            git log --no-merges --pretty='- %s' "$prev..HEAD" > changes.txt
+          else
+            git log --no-merges --pretty='- %s' -20 > changes.txt
+          fi
+          [ -s changes.txt ] || echo "- Újrafordítás" > changes.txt
+          python3 - <<'PY'
+          import os
+          notes = open(".github/release-notes.md", encoding="utf-8").read()
+          sha = os.environ["GITHUB_SHA"]
+          notes = (notes.replace("{{CHANGES}}", open("changes.txt", encoding="utf-8").read().strip())
+                        .replace("{{SHA_SHORT}}", sha[:7])
+                        .replace("{{SHA}}", sha))
+          open("notes.md", "w", encoding="utf-8").write(notes)
+          PY
+          cat notes.md
+      - name: Publish release
+        run: |
+          gh release create "v$VERSION" \
+            "dist/BIMonitor.exe" \
+            "docs/BIMonitor_minta_elemek.json" \
+            --title "Energofish BI Output Monitor $VERSION" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA" \
+            --latest

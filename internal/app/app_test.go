@@ -281,3 +281,21 @@ func mustDate(s string) calendar.Date {
 	}
 	return d
 }
+
+// The sample list attached to every release must stay importable.
+func TestSampleListIsValid(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "BIMonitor_minta_elemek.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := DecodeItems(data)
+	if err != nil || len(items) == 0 {
+		t.Fatal(err, len(items))
+	}
+	a, _, _ := newTestApp(t)
+	for _, r := range a.previewImport(items) {
+		if r.Action == "invalid" {
+			t.Errorf("%s: %s", r.Item.Name, r.Error)
+		}
+	}
+}
