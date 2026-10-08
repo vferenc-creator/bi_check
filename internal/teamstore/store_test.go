@@ -564,3 +564,40 @@ func TestNotifyFlagIsNotShared(t *testing.T) {
 		t.Fatalf("%+v", r.Definition)
 	}
 }
+
+func TestChangedFieldsScheduleByMeaning(t *testing.T) {
+	a := item("R")
+	a.Schedule = schedule.Spec{Type: schedule.Hourly}
+	b := a
+	b.Schedule = schedule.Spec{Type: schedule.Hourly, IntervalMinutes: 60, From: "00:00", To: "23:59"}
+	if f := ChangedFields(a, b); len(f) != 0 {
+		t.Fatalf("equivalent schedules reported as changed: %v", f)
+	}
+	b.Schedule.From = "06:00"
+	if f := ChangedFields(a, b); len(f) != 1 || f[0] != "ütemezés" {
+		t.Fatalf("%v", f)
+	}
+}
+
+func TestOwnLockFromEarlierSessionIsTakenOverAtOnce(t *testing.T) {
+	root, a, _, ca, _ := newShared(t)
+	r, _ := a.Create(item("R"), "")
+	a.Acquire(r.ID) // then the PC crashes
+	// Same user, same PC, new process (new instance id), only 1 minute later.
+	ca.Add(time.Minute)
+	a2 := Open(Options{Root: root, Identity: Identity{User: a.opt.Identity.User, Display: "anna", Host: a.opt.Identity.Host}, Now: ca.Now})
+	a2.Sync()
+	if n := a2.CleanOwnStaleLocks(); n != 1 {
+		t.Fatalf("cleaned %d", n)
+	}
+	if _, err := a2.Acquire(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else's 1-minute-old lock is of course NOT taken over.
+	b := instance(t, root, "bela", &clock{t: t0.Add(2 * time.Minute)})
+	b.Sync()
+	var le *LockedError
+	if _, err := b.Acquire(r.ID); !errors.As(err, &le) {
+		t.Fatalf("bela must respect anna's fresh lock: %v", err)
+	}
+}

@@ -275,6 +275,11 @@ func (a *App) teamSync(st *teamStateT, first bool) {
 		}
 		return
 	}
+	if first || !wasOn {
+		if n := st.store.CleanOwnStaleLocks(); n > 0 {
+			log.Printf("közös mód: %d saját, korábbi munkamenetből maradt zár feloldva", n)
+		}
+	}
 	if !wasOn && !first {
 		log.Printf("közös mód: újra elérhető a közös mappa")
 		a.P.Push("toast", map[string]any{"text": "A közös mappa újra elérhető – a lista frissült."})
@@ -372,6 +377,19 @@ func (a *App) teamSave(ts *teamstore.Store, it model.Item, force bool) (SaveResu
 			base = -1
 		}
 		_, err := ts.Save(it, base)
+		if errors.Is(err, teamstore.ErrNotLocked) {
+			// Our lock was broken meanwhile (by hand or as orphaned). If the
+			// report is free again, take the lock and let the revision check
+			// decide – a newer version then shows up as a conflict below.
+			if _, lerr := ts.Acquire(it.ID); lerr != nil {
+				var le *teamstore.LockedError
+				if errors.As(lerr, &le) {
+					return SaveResult{}, fmt.Errorf("a szerkesztési zárat közben %s vette át – a módosításai nem kerültek mentésre", le.Lock.Holder())
+				}
+				return SaveResult{}, teamErr(lerr)
+			}
+			_, err = ts.Save(it, base)
+		}
 		var ce *teamstore.ConflictError
 		if errors.As(err, &ce) {
 			cur := ce.Current.Definition

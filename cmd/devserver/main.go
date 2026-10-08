@@ -20,6 +20,7 @@ import (
 
 	"bimonitor/internal/schedule"
 	"bimonitor/internal/store"
+	"bimonitor/internal/teamstore"
 
 	"bimonitor/internal/app"
 	"bimonitor/internal/model"
@@ -82,6 +83,8 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address")
 	data := flag.String("data", "devdata", "data directory")
 	seed := flag.Bool("seed", false, "fill the history with 30 days of fake events (demo)")
+	user := flag.String("user", "", "simulated user name for the shared mode (e.g. \"Kiss Anna\")")
+	host := flag.String("host", "", "simulated computer name")
 	flag.Parse()
 	_ = os.MkdirAll(*data, 0o755)
 
@@ -90,6 +93,7 @@ func main() {
 		SettingsPath: filepath.Join(*data, "settings.json"),
 		HistoryPath:  filepath.Join(*data, "history.db"),
 		LocalDir:     filepath.Join(*data, "local"),
+		Identity:     teamstore.Identity{User: *user, Display: *user, Host: *host},
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -11,6 +11,7 @@ import (
 
 	"bimonitor/internal/calendar"
 	"bimonitor/internal/model"
+	"bimonitor/internal/schedule"
 )
 
 // CalendarLockID is the lock used for calendar.json.
@@ -240,6 +241,14 @@ func ChangedFields(a, b model.Item) []string {
 	}
 	var out []string
 	for _, x := range fs {
+		if sa, ok := x.x.(schedule.Spec); ok {
+			// Compare by meaning: the editor fills in defaults (e.g. a 60
+			// minute interval) that do not change the schedule.
+			if sa.Describe() != x.y.(schedule.Spec).Describe() {
+				out = append(out, x.name)
+			}
+			continue
+		}
 		if !reflect.DeepEqual(x.x, x.y) {
 			out = append(out, x.name)
 		}

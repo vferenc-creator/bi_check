@@ -271,3 +271,60 @@ func TestWindowCloseReleasesLocks(t *testing.T) {
 	}
 	t.Fatal("lock not released on window close")
 }
+
+// Ferenc edits; Anna force-unlocks and saves; Ferenc's save must show a
+// conflict (not a silent overwrite and not a cryptic error).
+func TestBrokenLockThenSaveShowsConflict(t *testing.T) {
+	shared := filepath.Join(t.TempDir(), "kozos")
+	os.MkdirAll(shared, 0o755)
+	anna, dir := newUserApp(t, "anna")
+	fer, _ := newUserApp(t, "ferenc")
+	call[enableRes](t, anna, "teamEnable", map[string]string{"folder": shared})
+	call[enableRes](t, fer, "teamEnable", map[string]string{"folder": shared})
+	it := call[SaveResult](t, anna, "saveItem", localItemDef("KPI", filepath.Join(dir, "k.csv"))).View.Item
+	call[Snapshot](t, fer, "teamSyncNow", nil)
+
+	type lockRes struct {
+		OK   bool       `json:"ok"`
+		Item model.Item `json:"item"`
+	}
+	fl := call[lockRes](t, fer, "lockItem", it.ID)
+	if !fl.OK {
+		t.Fatal("ferenc should get the lock")
+	}
+	call[string](t, anna, "forceUnlock", it.ID)
+	al := call[lockRes](t, anna, "lockItem", it.ID)
+	al.Item.GraceMinutes = 55
+	call[SaveResult](t, anna, "saveItem", al.Item)
+
+	mine := fl.Item
+	mine.Name = "KPI (Ferenc)"
+	res := call[SaveResult](t, fer, "saveItem", mine)
+	if res.Conflict == nil || res.Conflict.ModifiedBy != "anna" || !contains(res.Conflict.Fields, "türelmi idő") || !contains(res.Conflict.Fields, "név") {
+		t.Fatalf("expected a conflict with anna's change: %+v", res)
+	}
+	// Ferenc keeps the lock while he decides in the conflict dialog.
+	if al2 := call[lockRes](t, anna, "lockItem", it.ID); al2.OK {
+		t.Fatal("anna must not get the lock while ferenc resolves the conflict")
+	}
+	fres := call[SaveResult](t, fer, "saveItemForce", map[string]any{"item": mine, "force": true})
+	if fres.Conflict != nil || fres.View.Item.Name != "KPI (Ferenc)" {
+		t.Fatalf("force: %+v", fres)
+	}
+	// If someone else really holds the lock, the message names them.
+	call[lockRes](t, anna, "lockItem", it.ID)
+	stale := fres.View.Item
+	stale.Note = "x"
+	if err := rpcErr(fer, "saveItem", stale); err == nil || !strings.Contains(err.Error(), "anna") {
+		t.Fatalf("expected a message naming anna: %v", err)
+	}
+}
+
+func contains(s []string, x string) bool {
+	for _, v := range s {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}

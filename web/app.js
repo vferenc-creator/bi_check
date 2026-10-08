@@ -95,6 +95,10 @@ const ICONS = {
   ack: '<path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z"/><path d="m8 12 3 3 5-6"/>',
   open: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   test: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
+  cloudOff: '<path d="M3 3l18 18"/><path d="M8 6.5A6 6 0 0 1 17.5 10H18a4 4 0 0 1 2.2 7.3M17 19H7a5 5 0 0 1-1.6-9.7"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/>',
 };
 function icon(name, cls) {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -130,6 +134,16 @@ function pill(status, text) {
   return h("span", { class: "pill st-" + status }, h("span", { class: "dot" }), text || STATUS[status] || status);
 }
 const pad = n => String(n).padStart(2, "0");
+// Shared ("közös") mode helpers.
+const teamOn = () => !!(S.snap && S.snap.team && S.snap.team.enabled && S.snap.team.status && S.snap.team.status.root);
+const teamOnline = () => teamOn() && S.snap.team.status.online;
+const teamReadOnly = () => teamOn() ? (S.snap.team.status.readOnly || "") : "";
+function teamCanEdit() {
+  if (!teamOn()) return true;
+  if (!teamOnline()) { toast("Offline mód: a közös mappa nem érhető el, a szerkesztés átmenetileg nem lehetséges.", true); return false; }
+  if (teamReadOnly()) { toast(teamReadOnly(), true); return false; }
+  return true;
+}
 function parseT(s) { if (!s || s.startsWith("0001-")) return null; const d = new Date(s); return isNaN(d) ? null : d; }
 function fmtDateTime(s, withSec) {
   const d = typeof s === "string" ? parseT(s) : s;
@@ -247,6 +261,7 @@ function renderSidebar() {
     }
   }
   sb.append(h("div", { class: "spacer" }));
+  if (teamOn()) sb.append(nav("trash", "Lomtár", "trash", S.snap.team.trash || undefined, { active: S.view === "trash", onclick: () => go("trash") }));
   sb.append(nav("events", "Eseménynapló", "calendar", undefined, { active: S.view === "events", onclick: () => go("events") }));
   sb.append(nav("settings", "Beállítások", "gear", undefined, { active: S.view === "settings", onclick: () => go("settings") }));
   sb.append(nav("about", "Névjegy", "info", undefined, { active: S.view === "about", onclick: () => go("about") }));
@@ -321,15 +336,30 @@ views.items = main => {
   const last = S.items.map(r => parseT(r.state.lastCheck)).filter(Boolean).sort((a, b) => b - a)[0];
   main.append(h("div", { class: "page-head" },
     h("div", {}, h("h1", {}, title),
-      h("div", { class: "sub" }, rows.length + " / " + S.items.length + " elem" + (last ? " · utolsó ellenőrzés: " + fmtDateTime(last, true) : ""))),
+      h("div", { class: "sub" }, rows.length + " / " + S.items.length + " elem" + (last ? " · utolsó ellenőrzés: " + fmtDateTime(last, true) : ""),
+        teamOn() ? h("span", { class: "team-chip", title: S.snap.team.folder }, icon("users"), "Közös lista" + (S.snap.team.status.online ? " · frissítve " + fmtDateTime(S.snap.team.status.lastSync, true) : " · offline")) : null)),
     h("div", { class: "grow" }),
     S.statusFilter || S.search ? h("button", { class: "btn sm ghost", onclick: () => { S.statusFilter = ""; S.search = ""; $("#search").value = ""; render(); } }, icon("close"), "Szűrés törlése") : null,
-    h("button", { class: "btn sm", onclick: importItems, title: "Elemek importálása JSON vagy CSV fájlból" }, icon("upload"), "Import"),
+    teamOn() ? h("button", { class: "btn sm", onclick: () => api("teamSyncNow").then(s => { applySnapshot(s); toast("Közös lista frissítve."); }).catch(fail), title: "A közös mappa újraolvasása most" }, icon("refresh"), "Frissítés") : null,
+    h("button", { class: "btn sm", onclick: () => { if (teamCanEdit()) importItems(); }, title: "Elemek importálása JSON vagy CSV fájlból" }, icon("upload"), "Import"),
     h("button", { class: "btn sm", onclick: e => { e.stopPropagation(); exportMenu(e.currentTarget); }, title: "Elemek exportálása" }, icon("download"), "Export"),
   ));
   if (S.snap && S.snap.pausedUntil && parseT(S.snap.pausedUntil) > new Date()) {
     main.append(h("div", { class: "banner" }, icon("bellOff"), h("span", { class: "grow" }, "Az értesítések szünetelnek eddig: " + fmtDateTime(S.snap.pausedUntil)),
       h("button", { class: "btn sm", onclick: () => api("pauseNotifications", "").then(refresh).catch(fail) }, "Visszakapcsolás")));
+  }
+  if (teamOn()) {
+    const ts = S.snap.team.status;
+    if (!ts.online) {
+      main.append(h("div", { class: "banner", style: { background: "color-mix(in srgb, var(--unreachable) 14%, transparent)" } }, icon("cloudOff"),
+        h("span", { class: "grow" }, h("b", {}, "Offline mód: "), (ts.error || "a közös mappa nem érhető el") + ". A figyelés a legutóbb beolvasott listával fut tovább, a szerkesztés átmenetileg tiltva; visszatéréskor automatikusan frissül."),
+        h("button", { class: "btn sm", onclick: () => api("teamSyncNow").then(applySnapshot).catch(fail) }, icon("refresh"), "Újrapróbálás")));
+    } else if (ts.readOnly) {
+      main.append(h("div", { class: "banner" }, icon("info"), h("span", { class: "grow" }, ts.readOnly)));
+    }
+    if (ts.bad && ts.bad.length) {
+      main.append(h("div", { class: "banner" }, icon("info"), h("span", { class: "grow" }, ts.bad.length + " riportfájl sérült vagy éppen íródik a közös mappában – az utolsó jó verzióval figyelek tovább.")));
+    }
   }
   const down = (S.snap && S.snap.servers || []).filter(s => s.down);
   for (const sv of down) {
@@ -377,8 +407,10 @@ function itemRow(r) {
     h("td", {}, st.checking ? h("span", { class: "pill st-unknown" }, icon("refresh", "spin"), "Ellenőrzés…") : pill(st.status), st.acked ? h("span", { class: "group-tag", title: "Nyugtázva" }, "nyugtázva") : null),
     h("td", {}, h("span", { class: "name" }, it.name), it.group ? h("span", { class: "group-tag" }, it.group) : null,
       it.source ? h("span", { class: "shared-tag", title: "Közös listából: " + it.source }, "közös") : null,
-      !it.notify || ((S.settings && S.settings.overrides || {})[it.id] || {}).mute ? icon("bellOff", "mute-ic") : null,
-      it.owner ? h("div", { class: "small muted" }, it.owner) : null),
+      !it.notify || ((S.settings && S.settings.overrides || {})[it.id] || {}).mute || (r.team && r.team.muted) ? icon("bellOff", "mute-ic") : null,
+      r.team && r.team.recent ? h("span", { class: "new-tag", title: r.team.recent.by + " – " + fmtDateTime(r.team.recent.at) }, { added: "új", modified: "módosítva", restored: "visszaállítva" }[r.team.recent.kind] || "változott") : null,
+      it.owner ? h("div", { class: "small muted" }, it.owner) : null,
+      r.team && r.team.lock && !r.team.lock.mine ? h("div", { class: "lock-line", title: r.team.lock.holder }, icon("lock"), "Szerkeszti: " + r.team.lock.name + (r.team.lock.expired ? " (lejárt zár)" : "")) : null),
     h("td", {}, h("div", { class: "path", title: st.file ? st.file.path : it.path }, "‎" + (st.file ? st.file.path : (st.resolved || it.path)))),
     h("td", { class: "small" }, st.scheduleText || ""),
     h("td", { class: "when", title: st.file ? fmtFull(st.file.modTime) : "" }, st.file ? fmtDateTime(st.file.modTime) : h("span", { class: "muted" }, "–"),
@@ -412,7 +444,7 @@ function itemMenu(anchor, r) {
   const it = r.item;
   const shared = !!it.source;
   showMenu(anchor, [
-    !shared && { label: "Szerkesztés", icon: "edit", run: () => openEditor(it) },
+    !shared && { label: r.team && r.team.lock && !r.team.lock.mine ? "Megtekintés (zárolva)" : "Szerkesztés", icon: "edit", run: () => openEditor(it) },
     !shared && { label: "Duplikálás", icon: "copy", run: () => duplicateItem(it.id) },
     { label: it.enabled ? (shared ? "Kikapcsolás nálam" : "Kikapcsolás") : "Bekapcsolás", icon: "power", run: () => setEnabled(it.id, !it.enabled) },
     shared && { label: (S.settings.overrides || {})[it.id] && S.settings.overrides[it.id].mute ? "Értesítések visszakapcsolása" : "Némítás nálam", icon: "bellOff",
@@ -424,7 +456,7 @@ function itemMenu(anchor, r) {
     { label: "Fájl megnyitása", icon: "open", run: () => openPath(it.id, "file") },
     { label: "Mappa megnyitása", icon: "folder", run: () => openPath(it.id, "folder") },
     !shared && null,
-    !shared && { label: "Törlés", icon: "trash", danger: true, run: () => deleteItem(it) },
+    !shared && { label: teamOn() ? "Lomtárba helyezés" : "Törlés", icon: "trash", danger: true, run: () => { if (teamCanEdit()) deleteItem(it); } },
   ].filter(x => x !== false));
 }
 
@@ -463,7 +495,10 @@ async function setEnabled(id, enabled) {
   try { await api("setEnabled", { id, enabled }); await refresh(); toast(enabled ? "Elem bekapcsolva." : "Elem kikapcsolva."); } catch (e) { fail(e); }
 }
 async function deleteItem(it) {
-  if (!(await confirmBox("Elem törlése", "Biztosan törli ezt az elemet?\n\n" + it.name, "Törlés", true))) return;
+  const tm = teamOn();
+  if (!(await confirmBox(tm ? "Lomtárba helyezés" : "Elem törlése",
+    tm ? "A riport a közös lomtárba kerül (mindenkinél eltűnik a listából), onnan visszaállítható.\n\n" + it.name : "Biztosan törli ezt az elemet?\n\n" + it.name,
+    tm ? "Lomtárba" : "Törlés", true))) return;
   try {
     await api("deleteItem", { id: it.id });
     if (S.selected === it.id) closeDrawer();
@@ -507,7 +542,7 @@ function renderDrawer() {
     h("div", { class: "small muted" }, [it.group, it.owner].filter(Boolean).join(" · ") || " "),
     h("div", { class: "d-actions" },
       h("button", { class: "btn sm primary", onclick: () => checkNow(it.id) }, icon("refresh"), "Ellenőrzés most"),
-      !shared ? h("button", { class: "btn sm", onclick: () => openEditor(it) }, icon("edit"), "Szerkesztés") : null,
+      !shared ? h("button", { class: "btn sm", onclick: () => openEditor(it) }, icon(r.team && r.team.lock && !r.team.lock.mine ? "lock" : "edit"), r.team && r.team.lock && !r.team.lock.mine ? "Megtekintés" : "Szerkesztés") : null,
       h("button", { class: "btn sm", onclick: () => openPath(it.id, "file"), disabled: !st.file }, icon("open"), "Fájl"),
       h("button", { class: "btn sm", onclick: () => openPath(it.id, "folder") }, icon("folder"), "Mappa"),
       h("button", { class: "btn sm icon", title: "Továbbiak", onclick: e => { e.stopPropagation(); itemMenu(e.currentTarget, r); } }, icon("dots")),
@@ -542,6 +577,7 @@ function renderDrawer() {
     for (const c of st.candidates) ev.append(h("div", { class: "event" }, h("span", { class: "t" }, fmtDateTime(c.modTime)), h("span", { class: "mono grow selectable" }, c.name), h("span", { class: "muted" }, fmtSize(c.size))));
     body.append(ev);
   }
+  if (r.team) renderTeamSection(body, r);
   if (typeof renderHistory === "function") renderHistory(body, it, st);
   d.classList.add("open");
   body.scrollTop = keep;
@@ -562,8 +598,19 @@ async function openEditor(item) {
     try { it = await api("newItem"); } catch (e) { return fail(e); }
     if (S.group && S.group !== "Csoport nélkül") it.group = S.group;
   }
-  if (!S.groups.length) { try { S.groups = await api("groups"); } catch (_) { /* ignore */ } }
+  try { S.groups = await api("groups"); } catch (_) { /* ignore */ }
   const isNew = !it.id;
+  const team = teamOn();
+  let locked = false, readOnly = false, roReason = "", roLock = null;
+  if (team && isNew && !teamCanEdit()) return;
+  if (team && !isNew) {
+    try {
+      const lr = await api("lockItem", it.id);
+      if (lr.item && lr.item.id) it = lr.item; // freshest version from the share
+      if (lr.ok) locked = true;
+      else { readOnly = true; roReason = lr.reason; roLock = lr.lock; }
+    } catch (e) { readOnly = true; roReason = e.message; }
+  }
   const sp = it.schedule;
   let suggestions = [];
   let testOut = null;
@@ -572,7 +619,18 @@ async function openEditor(item) {
   const modal = h("div", { class: "modal" });
   ov.append(modal);
   document.body.append(ov);
-  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); render(); };
+  const close = () => {
+    ov.remove();
+    document.removeEventListener("keydown", onKey);
+    S.onLockLost = null;
+    if (locked) { locked = false; api("unlockItem", it.id).catch(() => {}); }
+    render();
+  };
+  S.onLockLost = ids => {
+    if (!locked || !ids.includes(it.id)) return;
+    locked = false;
+    clear(errBox).append(h("div", { class: "errbox" }, "A szerkesztési zárat elvesztette (valaki feloldotta, vagy a gép sokáig nem érte el a közös mappát). A mentés ütközés-ellenőrzéssel történik."));
+  };
   const onKey = e => { if (e.key === "Escape") close(); if (e.key === "Enter" && e.ctrlKey) save(); };
   document.addEventListener("keydown", onKey);
 
@@ -774,9 +832,12 @@ async function openEditor(item) {
   }
 
   async function save() {
+    if (readOnly) return;
     clear(errBox);
     try {
       const r = await api("saveItem", it);
+      if (r.conflict) { showConflict(r.conflict); return; }
+      locked = false; // released by the save
       close();
       await refresh();
       toast(isNew ? "Új elem felvéve: " + r.view.item.name : "Mentve: " + r.view.item.name);
@@ -792,7 +853,9 @@ async function openEditor(item) {
   const minKB = { v: sus.minBytes ? Math.round(sus.minBytes / 1024) : 0 };
 
   modal.append(
-    h("div", { class: "m-head" }, h("h2", {}, isNew ? "Új figyelt elem" : "Elem szerkesztése"), h("div", { class: "grow" }),
+    h("div", { class: "m-head" }, h("h2", {}, isNew ? "Új figyelt elem" : readOnly ? "Riport megtekintése" : "Elem szerkesztése"),
+      team && !isNew && !readOnly ? h("span", { class: "group-tag", title: "Ön szerkeszti – a többiek számára zárolva" }, icon("lock", "mute-ic"), " zárolva Önnek") : null,
+      h("div", { class: "grow" }),
       h("button", { class: "btn sm icon ghost", onclick: close, title: "Bezárás (Esc)" }, icon("close"))),
     h("div", { class: "m-body" }, h("div", { class: "editor" },
       h("div", {},
@@ -817,7 +880,7 @@ async function openEditor(item) {
             field("Minimális méret (KB)", h("input", { class: "input narrow", type: "number", min: 0, value: minKB.v, oninput: e => { sus.minBytes = (parseInt(e.target.value, 10) || 0) * 1024; } })),
             field("Méretcsökkenés küszöb (%)", number(sus, "dropPercent", { min: 0, max: 99 }), "a szokásos mérethez képest; 0 = ki"))),
         h("fieldset", {}, h("legend", {}, "Működés"),
-          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", "Értesítés erről az elemről")),
+          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", team ? "Értesítés nekem (személyes beállítás)" : "Értesítés erről az elemről")),
           h("div", { style: { marginTop: "12px" } }, field("További e-mail címzettek", text(it, "emailTo", { placeholder: "pl. felelos@energofish.hu (csak erről az elemről kap levelet)" }), "Az SMTP beállítások bekapcsolása esetén."))),
         errBox,
       ),
@@ -835,8 +898,66 @@ async function openEditor(item) {
   renderPathHelp();
   renderSchedule();
   updatePreview();
-  setTimeout(() => (isNew ? pathInput : $("#ed-name")).focus(), 50);
+  if (readOnly) {
+    const body = modal.querySelector(".m-body");
+    $$("input, select, textarea, button", body).forEach(el => { if (!el.closest(".side")) el.disabled = true; });
+    $$(".m-foot .btn.primary", modal).forEach(b => b.remove());
+    body.prepend(h("div", { class: "banner", style: { background: "color-mix(in srgb, var(--unreachable) 12%, transparent)" } }, icon("lock"),
+      h("span", { class: "grow" }, h("b", {}, roReason || "Csak megtekintés"), roLock ? h("div", { class: "small muted" }, "Megnézni lehet, szerkeszteni a zár feloldásáig nem.") : null),
+      roLock ? h("button", { class: "btn sm", onclick: async () => {
+        const msg = "A zárat " + roLock.holder + " tartja" + (roLock.expired ? " (lejárt – az életjel régóta nem frissült)." : ".") +
+          "\n\nCsak akkor oldja fel, ha biztos benne, hogy ő már nem szerkeszti (pl. lefagyott a gépe). A feloldás bekerül a riport változásnaplójába.";
+        if (!(await confirmBox("Zár feloldása", msg, "Feloldás", true))) return;
+        try { await api("forceUnlock", it.id); close(); await refresh(); openEditor(S.items.find(x => x.item.id === it.id).item); } catch (e) { fail(e); }
+      } }, icon("unlock"), "Zár feloldása") : null));
+  } else {
+    setTimeout(() => (isNew ? pathInput : $("#ed-name")).focus(), 50);
+  }
+
+  function fieldValue(x, f) {
+    switch (f) {
+      case "név": return x.name; case "csoport": return x.group; case "felelős": return x.owner; case "megjegyzés": return x.note;
+      case "útvonal": return x.path; case "dátum token": return x.tokenMode === "any" ? "bármilyen dátum" : "elvárt nap";
+      case "türelmi idő": return x.graceMinutes + " perc"; case "korai tolerancia": return x.earlyMinutes + " perc";
+      case "figyelés be/ki": return x.enabled ? "bekapcsolva" : "kikapcsolva"; case "e-mail címzettek": return x.emailTo;
+      case "gyanússági szabályok": return (x.suspicious.zeroBytes ? "0 bájt gyanús, " : "") + "min. " + Math.round((x.suspicious.minBytes || 0) / 1024) + " KB, csökkenés " + (x.suspicious.dropPercent || 0) + "%";
+      case "ütemezés": return JSON.stringify(x.schedule);
+    }
+    return "";
+  }
+
+  async function showConflict(c) {
+    const describe = async sched => { try { return (await api("previewSchedule", { schedule: sched, count: 1 })).text; } catch (_) { return ""; } };
+    const tb = h("tbody");
+    for (const f of c.fields) {
+      let mine = fieldValue(it, f), theirs = fieldValue(c.current, f);
+      if (f === "ütemezés") { mine = await describe(it.schedule); theirs = await describe(c.current.schedule); }
+      tb.append(h("tr", {}, h("td", { class: "name" }, f), h("td", { class: "selectable" }, mine || "–"), h("td", { class: "selectable" }, theirs || "–")));
+    }
+    const cov = h("div", { class: "overlay" });
+    const shut = () => cov.remove();
+    cov.append(h("div", { class: "modal", style: { width: "820px" } },
+      h("div", { class: "m-head" }, icon("history"), h("h2", {}, "A riportot közben más is módosította")),
+      h("div", { class: "m-body" },
+        h("p", { style: { marginTop: 0 } }, c.message),
+        c.fields.length ? h("table", { class: "table" },
+          h("colgroup", {}, h("col", { style: { width: "170px" } }), h("col"), h("col")),
+          h("thead", {}, h("tr", {}, h("th", { class: "nosort" }, "Mező"), h("th", { class: "nosort" }, "Az Ön változata"),
+            h("th", { class: "nosort" }, "A közös mappában (" + c.modifiedBy + ", " + fmtDateTime(c.modifiedAt) + ")"))), tb)
+          : h("p", { class: "muted" }, "A két változat tartalma megegyezik.")),
+      h("div", { class: "m-foot" },
+        h("button", { class: "btn", onclick: shut }, "Vissza a szerkesztéshez"),
+        h("button", { class: "btn", onclick: async () => { shut(); close(); await refresh(); toast("Megtartva a közös mappában lévő változat (" + c.modifiedBy + ")."); } }, "Az övét tartom meg"),
+        h("button", { class: "btn primary", onclick: async () => {
+          try {
+            const r = await api("saveItemForce", { item: it, force: true });
+            shut(); locked = false; close(); await refresh(); toast("Az Ön változata mentve: " + r.view.item.name);
+          } catch (e) { fail(e); }
+        } }, icon("check"), "Az enyémet mentem"))));
+    document.body.append(cov);
+  }
 }
+bridge.on("lockLost", ids => { if (S.onLockLost) S.onLockLost(ids); toast("Egy szerkesztési zárat elvesztett – lásd a szerkesztőablakot.", true); });
 
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !$(".overlay")) { closeMenus(); if (S.selected) closeDrawer(); }
@@ -995,6 +1116,176 @@ async function importItems() {
   document.body.append(ov);
 }
 
+
+// ---------------------------------------------------------------------------
+// Shared mode: drawer section, trash, settings card
+// ---------------------------------------------------------------------------
+const CHANGE_LABEL = { created: "felvette", modified: "módosította", deleted: "lomtárba tette", restored: "visszaállította", unlocked: "feloldotta a zárat", imported: "átmásolta a közös listába" };
+
+function renderTeamSection(body, r) {
+  const tm = r.team, it = r.item;
+  const box = h("div");
+  if (tm.lock && !tm.lock.mine) {
+    box.append(h("div", { class: "banner", style: { background: "color-mix(in srgb, var(--unreachable) 12%, transparent)", marginTop: "12px" } }, icon("lock"),
+      h("span", { class: "grow" }, h("b", {}, "Szerkeszti: " + tm.lock.holder), tm.lock.expired ? h("div", { class: "small" }, "A zár lejárt (régóta nincs életjel) – a következő szerkesztő automatikusan átveszi.") : null),
+      h("button", { class: "btn sm", onclick: async () => {
+        if (!(await confirmBox("Zár feloldása", "A zárat " + tm.lock.holder + " tartja.\n\nCsak akkor oldja fel, ha biztos benne, hogy már nem szerkeszti (pl. lefagyott a gépe). A feloldás bekerül a riport változásnaplójába.", "Feloldás", true))) return;
+        try { await api("forceUnlock", it.id); await refresh(); toast("Zár feloldva."); } catch (e) { fail(e); }
+      } }, icon("unlock"), "Zár feloldása")));
+  }
+  const muted = ((S.settings.overrides || {})[it.id] || {}).mute;
+  const groupMuted = (S.snap.mutedGroups || []).includes(it.group);
+  box.append(h("div", { class: "section-t" }, "Közös riport"),
+    h("dl", { class: "kv" },
+      h("dt", {}, "Felvette"), h("dd", {}, tm.created.display || tm.created.user, " (" + tm.created.host + "), " + fmtDateTime(tm.created.at)),
+      h("dt", {}, "Utoljára módosította"), h("dd", {}, tm.modified.display || tm.modified.user, " (" + tm.modified.host + "), " + fmtDateTime(tm.modified.at)),
+      h("dt", {}, "Verzió"), h("dd", {}, tm.rev + "."),
+      h("dt", {}, "Értesítés nekem"), h("dd", {}, h("label", { class: "switch" }, h("input", { type: "checkbox", checked: !muted && !groupMuted, disabled: groupMuted,
+        onchange: async e => { try { await api("setMute", { id: it.id, mute: !e.target.checked }); S.settings = (await api("bootstrap")).settings; await refresh(); } catch (err) { fail(err); } } }),
+        groupMuted ? h("span", { class: "small muted" }, "a(z) „" + it.group + "” csoport némítva (Beállítások)") : h("span", { class: "small muted" }, "csak az Ön gépén")))));
+  const log = h("div", { class: "events" }, h("div", { class: "small muted" }, "Betöltés…"));
+  box.append(h("div", { class: "section-t" }, "Változásnapló"), log);
+  body.append(box);
+  api("itemChanges", it.id).then(list => {
+    clear(log);
+    if (!list.length) log.append(h("div", { class: "small muted" }, "Nincs bejegyzés."));
+    for (const c of list.slice(0, 30)) {
+      log.append(h("div", { class: "event" }, h("span", { class: "t" }, fmtDateTime(c.stamp.at)),
+        h("div", { class: "grow" }, h("b", {}, c.stamp.display || c.stamp.user), " ", CHANGE_LABEL[c.action] || c.action,
+          c.fields && c.fields.length ? h("span", { class: "muted" }, ": " + c.fields.join(", ")) : null,
+          c.note ? h("div", { class: "small muted" }, c.note) : null,
+          h("span", { class: "small muted" }, " · " + c.stamp.host + " · v" + c.rev))));
+    }
+  }).catch(() => {});
+}
+
+views.trash = main => {
+  main.append(h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Lomtár"), h("div", { class: "sub" }, "Törölt közös riportok – visszaállíthatók"))));
+  const box = h("div", { class: "card" }, h("div", { class: "card-b small muted" }, "Betöltés…"));
+  main.append(box);
+  api("trashList").then(rows => {
+    if (!rows.length) { box.replaceWith(h("div", { class: "card" }, h("div", { class: "empty" }, h("h2", {}, "A lomtár üres"), h("p", {}, "A közös listából törölt riportok ide kerülnek.")))); return; }
+    const tb = h("tbody");
+    for (const r of rows) {
+      tb.append(h("tr", {},
+        h("td", {}, h("span", { class: "name" }, r.item.name), r.item.group ? h("span", { class: "group-tag" }, r.item.group) : null, h("div", { class: "path" }, "‎" + r.item.path)),
+        h("td", { class: "small" }, (r.deleted.display || r.deleted.user) + " (" + r.deleted.host + ")", h("div", { class: "muted" }, fmtDateTime(r.deleted.at))),
+        h("td", { class: "acts", style: { textAlign: "right" } },
+          h("button", { class: "btn sm", style: { visibility: "visible" }, onclick: async () => { if (!teamCanEdit()) return; try { await api("restoreItem", r.id); await refresh(); go("trash"); toast("Visszaállítva: " + r.item.name); } catch (e) { fail(e); } } }, icon("history"), "Visszaállítás"),
+          h("button", { class: "btn sm danger", style: { visibility: "visible", marginLeft: "6px" }, onclick: async () => {
+            if (!teamCanEdit()) return;
+            if (!(await confirmBox("Végleges törlés", "A riport véglegesen törlődik a közös mappából (a változásnaplójával együtt).\n\n" + r.item.name, "Végleges törlés", true))) return;
+            try { await api("purgeItem", r.id); await refresh(); go("trash"); } catch (e) { fail(e); }
+          } }, icon("trash")))));
+    }
+    box.replaceWith(h("table", { class: "table" },
+      h("colgroup", {}, h("col"), h("col", { style: { width: "220px" } }), h("col", { style: { width: "220px" } })),
+      h("thead", {}, h("tr", {}, h("th", { class: "nosort" }, "Riport"), h("th", { class: "nosort" }, "Törölte"), h("th", { class: "nosort" }, ""))), tb));
+  }).catch(fail);
+};
+
+async function drawTeam(card) {
+  const tv = S.snap && S.snap.team || {};
+  const s = S.settings;
+  const t = s.team || {};
+  clear(card);
+  card.append(h("div", { class: "card-h" }, icon("users"), h("h3", {}, "Közös mód (csapat)"), h("div", { class: "grow" }),
+    tv.enabled && tv.status && tv.status.root ? h("span", { class: "pill " + (tv.status.online ? "st-ok" : "st-unreachable") }, h("span", { class: "dot" }), tv.status.online ? "online" : "offline") : null));
+  const b = h("div", { class: "card-b" });
+  card.append(b);
+  if (!(tv.enabled && tv.status && tv.status.root)) {
+    const folder = h("input", { class: "input mono grow", value: t.folder || "", placeholder: "\\\\EFS-FSRHQ\\Groups\\BI\\BI_Check_kozos" });
+    folder.addEventListener("paste", () => setTimeout(() => { folder.value = cleanPath(folder.value); }, 0));
+    const result = h("div", { style: { marginTop: "10px" } });
+    const check = async () => {
+      clear(result).append(h("div", { class: "small muted" }, "Ellenőrzés…"));
+      try {
+        const r = await api("teamCheck", folder.value);
+        folder.value = r.folder;
+        clear(result).append(h("div", { class: r.ok ? "okbox" : "errbox" }, r.message, r.converted ? " (Csatolt meghajtó → UNC.)" : ""));
+        return r.ok;
+      } catch (e) { clear(result).append(h("div", { class: "errbox" }, e.message)); return false; }
+    };
+    b.append(
+      h("p", { class: "small muted", style: { marginTop: 0, lineHeight: 1.5 } }, "Közös módban a figyelt riportok listája egy hálózati mappában van: bárki felvehet, szerkeszthet vagy törölhet riportot, és ezt a többi gépen futó példány is látja. Szerkesztés közben a riport a többiek számára zárolt. Az értesítési beállítások személyesek maradnak."),
+      h("label", { class: "field" }, "Közös mappa (UNC)", h("div", { class: "row" }, folder,
+        h("button", { class: "btn sm", onclick: async () => { try { const r = await api("browseFolder", folder.value); if (r.path) { folder.value = r.path; check(); } } catch (e) { fail(e); } } }, icon("folder"), "Tallózás"))),
+      h("div", { class: "row", style: { marginTop: "10px" } },
+        h("button", { class: "btn sm", onclick: check }, icon("test"), "Ellenőrzés"),
+        h("button", { class: "btn sm primary", onclick: async () => {
+          if (!(await check())) return;
+          try {
+            const r = await api("teamEnable", { folder: folder.value });
+            S.settings = (await api("bootstrap")).settings;
+            await refresh();
+            toast("Közös mód bekapcsolva.");
+            if (r.migration && r.migration.length) migrationDialog(r.migration);
+            render();
+          } catch (e) { fail(e); }
+        } }, icon("users"), "Közös mód bekapcsolása")),
+      result);
+    return;
+  }
+  const st = tv.status;
+  const draft = { pollSec: t.pollSec || 30, lockTtlMin: t.lockTtlMin || 10, toastOnChanges: !!t.toastOnChanges };
+  const row = (title, hint, ctrl) => h("div", { class: "setting-row" }, h("div", { class: "lbl" }, h("b", {}, title), hint ? h("span", {}, hint) : null), ctrl);
+  const num = (key, min, max) => h("input", { class: "input narrow", type: "number", min, max, value: draft[key], oninput: e => { draft[key] = parseInt(e.target.value, 10) || 0; } });
+  b.append(
+    h("dl", { class: "kv", style: { marginBottom: "10px" } },
+      h("dt", {}, "Közös mappa"), h("dd", { class: "mono selectable" }, st.root),
+      h("dt", {}, "Állapot"), h("dd", {}, st.online ? "elérhető · " + st.reports + " riport · frissítve " + fmtDateTime(st.lastSync, true) : "offline – " + (st.error || "") + (st.fromCache ? " (helyi gyorsítótárból fut)" : "")),
+      st.readOnly ? h("dt", {}, "Csak olvasás") : null, st.readOnly ? h("dd", {}, st.readOnly) : null,
+      h("dt", {}, "Ön"), h("dd", {}, tv.me || "")),
+    row("Frissítési időköz", "Másodperc – ennyi időnként olvassa újra a közös mappát.", num("pollSec", 5, 3600)),
+    row("Zár lejárati ideje", "Perc – ha egy szerkesztő gépéről ennyi ideig nem jön életjel, a zár elárvultnak számít.", num("lockTtlMin", 1, 240)),
+    row("Windows értesítés mások változtatásairól", "A felületen mindig megjelenik egy rövid jelzés.", h("label", { class: "switch" }, h("input", { type: "checkbox", checked: draft.toastOnChanges, onchange: e => { draft.toastOnChanges = e.target.checked; } }))),
+    h("div", { class: "row wrap", style: { marginTop: "10px" } },
+      h("button", { class: "btn sm primary", onclick: async () => { try { await api("teamSettings", draft); S.settings = (await api("bootstrap")).settings; toast("Mentve."); } catch (e) { fail(e); } } }, icon("check"), "Mentés"),
+      h("button", { class: "btn sm", onclick: () => api("teamSyncNow").then(s => { applySnapshot(s); go("settings"); }).catch(fail) }, icon("refresh"), "Frissítés most"),
+      h("button", { class: "btn sm", onclick: async () => {
+        try {
+          const r = await api("teamEnable", { folder: st.root });
+          if (r.migration && r.migration.length) migrationDialog(r.migration); else toast("Nincs átmásolható saját riport.");
+        } catch (e) { fail(e); }
+      } }, icon("upload"), "Saját riportok átmásolása"),
+      h("div", { class: "grow" }),
+      h("button", { class: "btn sm danger", onclick: async () => {
+        if (!(await confirmBox("Közös mód kikapcsolása", "A program visszaáll a saját (helyi) riportlistára. A közös mappa tartalma nem változik, később újra be lehet kapcsolni.", "Kikapcsolás", true))) return;
+        try { await api("teamDisable"); S.settings = (await api("bootstrap")).settings; await refresh(); go("settings"); } catch (e) { fail(e); }
+      } }, "Kikapcsolás")));
+}
+
+function migrationDialog(rows) {
+  const ov = h("div", { class: "overlay" });
+  const close = () => ov.remove();
+  const tb = h("tbody");
+  for (const r of rows) {
+    const sel = h("select", { class: "input", onchange: e => { r.action = e.target.value; } },
+      [["add", r.duplicate ? "másolás új riportként" : "átmásolás"], ["skip", "kihagyás"]].concat(r.duplicate ? [["overwrite", "a közös felülírása ezzel"]] : [])
+        .map(([v, l]) => h("option", { value: v, selected: r.action === v }, l)));
+    tb.append(h("tr", {},
+      h("td", {}, h("span", { class: "name" }, r.item.name), r.item.group ? h("span", { class: "group-tag" }, r.item.group) : null, h("div", { class: "path" }, "‎" + r.item.path)),
+      h("td", { class: "small" }, r.duplicate ? h("span", { style: { color: "var(--late)" } }, "Már van ilyen a közös listában: „" + r.duplicate + "” (" + (r.dupReason === "id" ? "azonos azonosító" : "azonos útvonal") + ")") : h("span", { class: "muted" }, "nincs a közös listában")),
+      h("td", {}, sel)));
+  }
+  ov.append(h("div", { class: "modal" },
+    h("div", { class: "m-head" }, h("h2", {}, "Saját riportok átmásolása a közös mappába")),
+    h("div", { class: "m-body" },
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "A saját listája nem törlődik: közös módban rejtve marad, kikapcsoláskor visszakapja. Az előzmények az azonosítóval együtt megmaradnak."),
+      h("table", { class: "table" }, h("colgroup", {}, h("col"), h("col", { style: { width: "300px" } }), h("col", { style: { width: "230px" } })),
+        h("thead", {}, h("tr", {}, h("th", { class: "nosort" }, "Saját riport"), h("th", { class: "nosort" }, "A közös listában"), h("th", { class: "nosort" }, "Teendő"))), tb)),
+    h("div", { class: "m-foot" },
+      h("button", { class: "btn", onclick: close }, "Most nem"),
+      h("button", { class: "btn primary", onclick: async () => {
+        try {
+          const c = await api("teamMigrate", rows);
+          close(); await refresh();
+          toast("Átmásolva: " + c.added + " új, " + c.overwritten + " felülírva, " + c.skipped + " kihagyva.");
+        } catch (e) { fail(e); await refresh(); }
+      } }, icon("upload"), "Átmásolás"))));
+  document.body.append(ov);
+}
+
 // ---- Settings view -------------------------------------------------------
 views.settings = main => {
   const s = JSON.parse(JSON.stringify(S.settings));
@@ -1032,6 +1323,9 @@ views.settings = main => {
       row("Csendes időszak kezdete / vége", null, h("div", { class: "row" }, timeIn(n.quiet, "from"), "–", timeIn(n.quiet, "to"))),
       row("Hétvégén is csendes", "Szombaton és vasárnap egész nap.", sw(n.quiet, "weekends")),
       row("Próbaértesítés", "Megjelenít egy minta értesítést.", h("button", { class: "btn sm", onclick: () => api("testNotification").catch(fail) }, icon("bell"), "Küldés")),
+      groupList().length ? h("div", { class: "section-t" }, "Csoportok – kérek értesítést (személyes)") : null,
+      groupList().map(g => row(g.name, g.count + " riport", h("label", { class: "switch" }, h("input", { type: "checkbox", checked: !(S.snap.mutedGroups || []).includes(g.name),
+        onchange: async e => { try { await api("setMute", { group: g.name, mute: !e.target.checked }); await refresh(); } catch (err) { fail(err); } } })))),
     )));
 
   settingsExtra(grid, s, row, sw, num, timeIn);
@@ -1085,9 +1379,9 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
   grid.append(calCard);
   drawCalendar(calCard, new Date().getFullYear());
 
-  const shCard = h("div", { class: "card" });
-  grid.append(shCard);
-  drawShared(shCard);
+  const teamCard = h("div", { class: "card" });
+  grid.prepend(teamCard);
+  drawTeam(teamCard);
 
   grid.append(h("div", { class: "card" },
     h("div", { class: "card-h" }, icon("folder"), h("h3", {}, "Adatok")),
@@ -1145,33 +1439,6 @@ async function drawCalendar(card, year) {
         h("button", { class: "btn sm ghost", onclick: () => { o.ignore = []; save(); } }, "visszaállítás")) : null));
 }
 
-async function drawShared(card) {
-  let lists;
-  try { lists = await api("sharedLists"); } catch (e) { return fail(e); }
-  const draft = lists.map(l => ({ id: l.id, name: l.name, path: l.path, enabled: l.enabled }));
-  const save = async () => { try { await api("saveSharedLists", draft); await refresh(); drawShared(card); toast("Közös listák mentve."); } catch (e) { fail(e); } };
-  const rows = h("div", { class: "col" });
-  lists.forEach((l, i) => {
-    rows.append(h("div", { class: "setting-row" },
-      h("div", { class: "lbl" }, h("b", {}, l.name), h("span", { class: "mono" }, l.path),
-        h("span", { style: { display: "block", color: l.error ? "var(--missing)" : "" } }, l.error ? "Hiba: " + l.error : (l.enabled ? l.count + " elem · betöltve: " + fmtDateTime(l.loadedAt) + (parseT(l.modTime) ? " · fájl: " + fmtDateTime(l.modTime) : "") : "kikapcsolva"))),
-      h("label", { class: "switch" }, h("input", { type: "checkbox", checked: l.enabled, onchange: e => { draft[i].enabled = e.target.checked; save(); } })),
-      h("button", { class: "btn sm ghost danger", onclick: () => { draft.splice(i, 1); save(); } }, icon("trash"))));
-  });
-  const name = h("input", { class: "input", placeholder: "Név, pl. BI csapat" });
-  const path = h("input", { class: "input mono grow", placeholder: "\\\\EFS-FSRHQ\\Groups\\BI\\monitor\\csapat.json" });
-  clear(card).append(
-    h("div", { class: "card-h" }, icon("users"), h("h3", {}, "Közös listák (csapat)"), h("div", { class: "grow" }),
-      lists.length ? h("button", { class: "btn sm", onclick: async () => { try { await api("reloadSharedLists"); await refresh(); drawShared(card); } catch (e) { fail(e); } } }, icon("refresh"), "Újratöltés") : null),
-    h("div", { class: "card-b" },
-      h("p", { class: "small muted", style: { marginTop: 0 } }, "Egy hálózati meghajtón lévő JSON lista, amit mindenki figyel. A karbantartó a saját elemeit „Exportálás JSON-ba” funkcióval menti erre az útvonalra; a többiek itt feliratkoznak. A közös elemeket helyben némítani vagy kikapcsolni lehet, szerkeszteni nem."),
-      rows,
-      h("div", { class: "col", style: { marginTop: "10px" } }, name,
-        h("div", { class: "row" }, path,
-          h("button", { class: "btn sm", onclick: async () => { const r = await api("browseJSON").catch(fail); if (r && r.path) path.value = r.path; } }, icon("folder"), "Tallózás")),
-        h("div", {}, h("button", { class: "btn sm primary", onclick: () => { if (!path.value.trim()) return; draft.push({ name: name.value, path: path.value, enabled: true }); save(); } }, icon("plus"), "Feliratkozás")))));
-}
-
 async function setOverride(id, patch) {
   try { await api("setOverride", Object.assign({ id }, patch)); await refresh(); } catch (e) { fail(e); }
 }
@@ -1200,7 +1467,7 @@ async function boot() {
   $("#btnCheckAll").append(icon("refresh"), "Ellenőrzés most");
   $("#btnNew").append(icon("plus"), "Új elem");
   $("#btnCheckAll").addEventListener("click", () => checkNow());
-  $("#btnNew").addEventListener("click", () => openEditor());
+  $("#btnNew").addEventListener("click", () => { if (teamCanEdit()) openEditor(); });
   $("#search").addEventListener("input", e => { S.search = e.target.value.trim().toLowerCase(); if (S.view !== "items") S.view = "items"; render(); });
   try {
     S.boot = await api("bootstrap");

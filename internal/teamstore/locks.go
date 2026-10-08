@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -35,7 +36,55 @@ func (s *Store) readLock(id string) (Lock, error) {
 	l.Heartbeat = info.ModTime()
 	l.Expired = s.now().Sub(l.Heartbeat) > s.opt.LockTTL
 	l.Mine = l.Owner.Instance != "" && l.Owner.Instance == s.opt.Identity.Instance
+	// Same user on the same PC but another process: only one instance can
+	// run per user session, so this is our own lock from a crashed or
+	// earlier session – safe to take over at once.
+	if !l.Mine && s.ownStale(l) {
+		l.Expired = true
+	}
 	return l, nil
+}
+
+func (s *Store) ownStale(l Lock) bool {
+	me := s.opt.Identity
+	return l.Owner.User != "" && l.Owner.Instance != me.Instance &&
+		strings.EqualFold(l.Owner.User, me.User) && strings.EqualFold(l.Owner.Host, me.Host)
+}
+
+// CleanOwnStaleLocks removes locks left behind by an earlier run of this
+// user on this PC (crash, power loss).
+func (s *Store) CleanOwnStaleLocks() int {
+	n := 0
+	_ = withTimeout(s.opt.Timeout, func() error {
+		es, err := os.ReadDir(s.dir("locks"))
+		if err != nil {
+			return err
+		}
+		for _, e := range es {
+			if !strings.HasSuffix(e.Name(), ".lock") {
+				continue
+			}
+			id := strings.TrimSuffix(e.Name(), ".lock")
+			l, err := s.readLock(id)
+			if err != nil || l.Mine || !s.ownStale(l) {
+				continue
+			}
+			if ok, _ := s.breakIfExpired(id); ok {
+				n++
+			}
+		}
+		return nil
+	})
+	if n > 0 {
+		s.mu.Lock()
+		for id, l := range s.locks {
+			if s.ownStale(l) {
+				delete(s.locks, id)
+			}
+		}
+		s.mu.Unlock()
+	}
+	return n
 }
 
 // createLock creates the lock file exclusively. Only one instance can win.
