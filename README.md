@@ -5,9 +5,12 @@ Windows-os tálcaalkalmazás az Energofish Kft. BI/kontrolling csapatának. Figy
 - egyetlen hordozható `BIMonitor.exe`, telepítő és admin jog nélkül
 - a háttérben fut, a tálcaikon színe mutatja az összesített állapotot
 - natív Windows értesítések, ismétlés nélkül
-- óránkénti, napi, heti, munkanapos (magyar munkaszüneti napokkal), havi és cron ütemezés
+- óránkénti, napi, heti, munkanapos (beépített magyar munkaszüneti napokkal), havi és cron ütemezés
 - konkrét fájl vagy minta (`sales_*.parquet`, `riport_{yyyyMMdd}.xlsx`)
-- előzmények, pontossági statisztika, eseménynapló, közös csapatlista
+- türelmi idő, korai érkezés, **üres ablak** (napi idősáv, amikor a fájl hiányozhat)
+- hálózati hibákat külön kezeli: lassú vagy kieső megosztásnál sem jelez tévesen „Hiányzik”-ot
+- előzmények, pontossági statisztika, eseménynapló
+- **közös mód:** egy riportlista az egész csapatnak, zárolással és változásnaplóval
 
 ## ⬇️ Letöltés
 
@@ -34,8 +37,8 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
 8. [Közös mód (csapat)](#közös-mód-csapat) · [Import/export](#importexport)
-9. [Munkaszüneti napok](#munkaszüneti-napok)
-10. [Hol vannak a beállítások?](#hol-vannak-a-beállítások)
+9. [Beállítások](#beállítások)
+10. [Hol tárolja az adatokat?](#hol-tárolja-az-adatokat)
 11. [Parancssori kapcsolók](#parancssori-kapcsolók)
 12. [Hibaelhárítás](#hibaelhárítás)
 13. [Fejlesztőknek](#fejlesztőknek)
@@ -66,10 +69,11 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 2. **Név**, **csoport** (pl. KNIME, DyntellBI, ERP export, Riport), **felelős**, **megjegyzés** (pl. melyik workflow állítja elő, mi a teendő hiba esetén).
 3. **Útvonal:** írja be a UNC útvonalat (`\\EFS-FSRHQ\Groups\BI\export.xlsx`), vagy válassza ki a **Tallózás…** gombbal.
 4. **Ütemezés:** válassza ki a típust. A jobb oldali **Ütemezés előnézet** azonnal mutatja a következő elvárt időpontokat, így rögtön látszik, ha valami rosszul van beállítva (cron, ünnepnapok).
-5. **Útvonal tesztelése:** megnézi a fájlt most, és megmutatja, milyen állapot lenne.
-6. **Felvétel**. Az elem azonnal ellenőrzésre kerül.
+5. **Tolerancia:** türelmi idő, korai érkezés, és ha kell, **üres ablak** (lásd lent).
+6. **Útvonal tesztelése:** megnézi a fájlt most, és megmutatja, milyen állapot lenne.
+7. **Felvétel**. Az elem azonnal ellenőrzésre kerül.
 
-A listában egy sorra kattintva megnyílik a **részletpanel**: indoklás, elvárt időpont, határidő, a talált fájl, előzmények, statisztika. Dupla kattintás: szerkesztés.
+A listában egy sorra kattintva megnyílik a **részletpanel**: indoklás, elvárt időpont, határidő, a talált fájl, előzmények, statisztika. Dupla kattintás: szerkesztés. A sor végén lévő „…” menüben: szerkesztés, duplikálás, ki-/bekapcsolás, nyugtázás, fájl vagy mappa megnyitása, törlés. A felső sáv állapotcímkéire (OK, Hiányzik…) kattintva a lista az adott állapotra szűr.
 
 Hasznos billentyűk: `F5` minden elem ellenőrzése most · `Ctrl+N` új elem · `Ctrl+F` keresés · `Esc` panel vagy ablak bezárása · `Ctrl+Enter` mentés a szerkesztőben.
 
@@ -127,6 +131,13 @@ Minden számítás magyar idő (Europe/Budapest) szerint történik.
 - **Téli időszámítás kezdete** (október, a 02:xx kétszer van): a kétszer előforduló időpont csak egyszer, az első alkalommal számít.
 - A türelmi idő valós időtartam, ezért éjfélen és időszámítás-váltáson át is helyesen működik.
 - Hónap 31-e rövidebb hónapban: az utolsó nap; február 29. szökőévben.
+
+### Magyar munkaszüneti napok (beépített)
+A „Munkanapokon” ütemezés, az óránkéntinél a „munkanapokon” napválasztás, a havi „munkanap” módok és a „Munkaszüneti napon” szabályok a programba **beépített** magyar naptárat használják. Ehhez nincs külön beállítás vagy szerkesztő; a korábbi „Munkanaptár” kártya kikerült.
+- Munkaszüneti napok: jan. 1., márc. 15., nagypéntek, húsvét, máj. 1., pünkösd, aug. 20., okt. 23., nov. 1., dec. 25–26.
+- Áthelyezett munkanapok 2025-re és 2026-ra. 2026-ban: jan. 2. pihenőnap / jan. 10. munkanap; aug. 21. pihenőnap / aug. 8. munkanap; dec. 24. pihenőnap / dec. 12. munkanap.
+
+> Az áthelyezéseket az NGM-rendelet évente határozza meg; az új év adatai programfrissítéssel kerülnek be (a kódban: `internal/calendar/transfers.go`). 2026 őszén törvényjavaslat van a parlament előtt, amely december 24-ét munkaszüneti nappá tenné; ha elfogadják, a naptárat frissíteni kell.
 
 ---
 
@@ -187,7 +198,7 @@ Az **Eseménynapló** (bal oldali menü) az összes elem állapotváltozását m
 
 Közös módban a figyelt riportok listája **egy hálózati mappában** van (pl. `\\EFS-FSRHQ\Groups\BI\BI_Check_kozos`). Bárki felvehet, szerkeszthet vagy törölhet riportot, és ezt a többi gépen futó példány is látja és figyeli.
 
-| Ferenc gépe: Anna épp szerkeszti a „Vezetői riportot”, a „KPI”-t módosította | Zárolt riport megnyitása: csak megtekintés |
+| Ferenc gépe: Anna épp szerkeszti a „Vezetői riportot” | Zárolt riport megnyitása: csak megtekintés |
 |---|---|
 | ![Közös lista](docs/kozos-lista.png) | ![Zárolt riport](docs/kozos-zarolt.png) |
 
@@ -213,7 +224,7 @@ Közös módban a figyelt riportok listája **egy hálózati mappában** van (pl
 ![Ütközés](docs/kozos-utkozes.png)
 
 **Változások követése**
-- A program beállítható időközönként (alapból 30 mp-enként) újraolvassa a közös mappát. A **Frissítés** gombbal azonnal is lehet.
+- A program beállítható időközönként (alapból 30 mp-enként) újraolvassa a közös mappát. A lista fejlécében lévő **Frissítés** gombbal azonnal is lehet.
 - Mások változtatásairól diszkrét jelzés jön („Új riport: X – felvette: Y”), a listában pedig „új / módosítva” címke. Kérésre Windows-értesítés is jöhet.
 - **Lomtár:** a törölt riport a lomtárba kerül (ki és mikor törölte), onnan visszaállítható vagy véglegesen törölhető.
 - **Változásnapló** riportonként a részletpanelen: ki, mikor, gépről, mit módosított (mezők szerint).
@@ -242,21 +253,21 @@ locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az �
 
 ---
 
-## Munkaszüneti napok
+## Beállítások
 
-A „Munkanapokon” ütemezés (és a „munkaszüneti napon kihagyás / áthelyezés” opciók) a beépített magyar naptárat használják. **Beépítve:**
-- a munkaszüneti napok: jan. 1., márc. 15., nagypéntek, húsvét, máj. 1., pünkösd, aug. 20., okt. 23., nov. 1., dec. 25–26.;
-- az **áthelyezett munkanapok** 2025-re és 2026-ra. 2026-ban: jan. 2. pihenőnap / jan. 10. munkanap; aug. 21. pihenőnap / aug. 8. munkanap; dec. 24. pihenőnap / dec. 12. munkanap.
+A bal oldali menü **Beállítások** oldalán. A módosítások a jobb felső **Mentés** gombbal érvényesek.
 
-> **Évente frissíteni kell!** Az áthelyezéseket az NGM-rendelet minden évben újra meghatározza; az új év adatai programfrissítéssel kerülnek be.
->
-> 2026 őszén törvényjavaslat van a parlament előtt, amely december 24-ét munkaszüneti nappá tenné. Ha elfogadják, ellenőrizze a december 12-i szombati munkanapot.
-
-A kódban az évenkénti adatok helye: `internal/calendar/transfers.go`.
+| Kártya | Mit lehet beállítani |
+|---|---|
+| **Közös mód (csapat)** | a közös mappa, ellenőrzés és be-/kikapcsolás; bekapcsolt állapotban: frissítési időköz (alapból 30 mp), zár lejárati ideje (alapból 10 perc), Windows-értesítés mások változtatásairól, *Frissítés most*, *Saját riportok átmásolása* |
+| **Általános** | indítás a Windows-zal; ellenőrzési gyakoriság (alapból 60 mp); hálózati időkorlát (alapból 10 mp – ennyi után számít egy kérés sikertelennek, utána újrapróbál); párhuzamos ellenőrzések (alapból 6; egy szerver felé legfeljebb 3 kérés fut egyszerre); előzmények megőrzése (alapból 180 nap); megjelenés (rendszer szerint / világos / sötét) |
+| **Értesítések** | Windows-értesítések be/ki, késésről is, helyreállás jelzése, csendes időszak (és hétvégén is), próbaértesítés; csoportonként, hogy kér-e értesítést (személyes) |
+| **Adatok** | figyelt elemek importálása/exportálása (JSON, CSV), az adatmappa megnyitása |
+| *Korábbi közös lista feliratkozás* | csak akkor látszik, ha egy régebbi verzióban feliratkozott egy közös listára: törölhető, mappánál egy kattintással közös mappaként használható |
 
 ---
 
-## Hol vannak a beállítások?
+## Hol tárolja az adatokat?
 
 | Hely | Tartalom |
 |---|---|
@@ -283,6 +294,7 @@ BIMonitor.exe --minimized     indítás csak a tálcán (ezt használja az autom
 BIMonitor.exe --data-dir X    a %APPDATA%/%LOCALAPPDATA% helyett az X mappát használja (teszteléshez)
 BIMonitor.exe --debug         a felületen elérhetők a fejlesztői eszközök (F12)
 BIMonitor.exe --selftest F    automata füstteszt: megnyitja a felületet, „ok”-t ír F-be és kilép (CI)
+BIMonitor.exe --selftest F --selftest-dialog   ugyanez, a fájlválasztó („Tallózás”) megnyitásával és bezárásával
 ```
 
 Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
@@ -291,10 +303,20 @@ Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
 
 ## Hibaelhárítás
 
+- **Nem indul el a Windows-zal** (kézzel elindul):
+  1. Lehet, hogy elindult, csak a tálcaikon a „^” alatt van elrejtve (automatikus indításkor nem nyílik ablak) – nézze meg ott vagy a Feladatkezelőben (`BIMonitor.exe`).
+  2. *Beállítások → Indítás a Windows-zal* be van-e kapcsolva (és mentve).
+  3. *Feladatkezelő → Indítás* (vagy *Gépház → Alkalmazások → Indítás*): a BI Monitor nincs-e **Letiltva**.
+  4. Honnan fut az exe? Az automatikus indítás mindig arra a helyre mutat, ahonnan utoljára indult. Ne a Letöltések mappából, ne hálózati meghajtóról és ne OneDrive-os mappából fusson – tegye egy helyi mappába (pl. `%LOCALAPPDATA%\Programs\BIMonitor\`), és onnan indítsa egyszer.
+  5. Az exe *Tulajdonságok* lapján alul ne legyen „Feloldás” (internetről letöltött fájl jelölése) – ha van, pipálja be.
+  6. Ha mindez rendben, céges házirend vagy vírusirtó tilthatja az indítást – ilyenkor az IT tud segíteni.
 - **Nem jelennek meg értesítések:** próbálja ki a *Beállítások → Próbaértesítés* gombot. Ellenőrizze a Windows *Beállítások → Rendszer → Értesítések* oldalán, hogy a „BI Output Monitor” engedélyezve van-e, és hogy nincs-e bekapcsolva a *Ne zavarjanak* mód. A tálcamenüben azt is nézze meg, nincs-e szüneteltetve.
 - **Minden elem „Elérhetetlen”:** hálózati vagy VPN-probléma, illetve a szerver nem érhető el. A lista tetején látszik, melyik szerver esett ki. Nézze meg Intézőben, elérhető-e az útvonal.
 - **„Hozzáférés megtagadva”:** a bejelentkezett felhasználónak nincs olvasási joga a mappához.
 - **Rossz időpontok:** nézze meg a szerkesztő ütemezés-előnézetét.
+- **„Várakozik – üres ablak”:** a riportnál beállított üres ablakban vagyunk, a fájl ilyenkor hiányozhat. Az ablak vége után a szokásos szabályok szerint ellenőriz.
+- **„újrapróbál…” címke:** átmeneti hálózati hiba volt; a program kb. 20 mp múlva újra megnézi, és csak ismételt hiba esetén jelez „Elérhetetlen”-t.
+- **Régi verzióból frissítve „Korábbi közös lista feliratkozás” kártya látszik:** a régi „Közös listák” funkciót a Közös mód váltotta fel. A kártyán a feliratkozás törölhető, vagy egy kattintással közös mappaként használható.
 - **Közös mód – „Szerkeszti: X”, de X már nem szerkeszti:** ha az életjel 10 perce nem frissült, a zár magától lejár. Ha sürgős, a *Zár feloldása* gombbal azonnal feloldható (ez naplózódik).
 - **Közös mód – offline sáv:** a közös mappa nem érhető el (VPN, hálózat, jogosultság). A figyelés közben fut tovább, visszatéréskor automatikusan frissül.
 - **Közös mód – „újabb programverzió kezeli”:** frissítse a BI Monitort a [legfrissebb kiadásra](https://github.com/vferenc-creator/bi_check/releases/latest).
@@ -319,9 +341,9 @@ cmd/devserver/       a valódi mag + felület böngészőben (fejlesztés, képe
 internal/schedule/   ★ ütemezés-kiértékelő (Prev/Next, DST, cron) – unit tesztekkel
 internal/calendar/   magyar munkanaptár (ünnepek, húsvét, áthelyezések)
 internal/pathpattern/ minták és dátum tokenek
-internal/checker/    fájlellenőrzés: timeout, szerverenkénti circuit breaker, hibaosztályozás
-internal/status/     állapot-kiértékelés (OK/Késik/Hiányzik/Elérhetetlen/Gyanús)
-internal/engine/     háttérütemező: mikor mit kell ellenőrizni
+internal/checker/    fájlellenőrzés: timeout, szerverenkénti sorban állás, újrapróbálás, circuit breaker, hibaosztályozás
+internal/status/     állapot-kiértékelés (OK/Késik/Hiányzik/Elérhetetlen/Gyanús, üres ablak)
+internal/engine/     háttérütemező: mikor mit kell ellenőrizni, „Elérhetetlen” megerősítése
 internal/notify/     értesítési szabályok (ismétlésgátlás, csendes időszak, összevonás)
 internal/store/      settings.json + history.db
 internal/teamstore/  ★ közös mód: riportfájlok, zárolás, ütközéskezelés, offline gyorsítótár – párhuzamos tesztekkel
@@ -341,8 +363,8 @@ tools/genicon/       az ikon vektoros újrarajzolása
 Az eredmény a `dist\BIMonitor.exe`. A build előbb lefuttatja a `tools/genres`-t, ami a `branding/` alapján legenerálja az exe-be ágyazott ikont, a manifestet (PerMonitorV2 DPI, asInvoker) és a verzióinfót.
 
 ### Kiadások (Releases)
-A `.github/workflows/build.yml` minden pushnál tesztel és buildel. A fő (alapértelmezett) ágra érkező, minden ellenőrzésen átment push után **automatikusan GitHub Release készül** „Latest” jelöléssel:
-- verziószám: a `VERSION` fájl (pl. `1.0`) + a build sorszáma → `v1.0.17`;
+A `.github/workflows/build.yml` minden pushnál tesztel és buildel. Az alapértelmezett ágra és a `claude/nifty-tesla-wqcp1f` fejlesztési ágra érkező, minden ellenőrzésen átment push után **automatikusan GitHub Release készül** „Latest” jelöléssel:
+- verziószám: a `VERSION` fájl (pl. `1.0`) + a build sorszáma → pl. `v1.0.22`;
 - csatolmányok: `BIMonitor.exe` és a `docs/BIMonitor_minta_elemek.json` mintalista;
 - a kiadási megjegyzés sablonja: `.github/release-notes.md`, a változáslista az előző kiadás óta érkezett commitokból készül.
 
@@ -353,7 +375,7 @@ A `.github/workflows/build.yml` minden pushnál tesztel és buildel. A fő (alap
 go test ./...            # unit tesztek (ütemező, naptár, minták, checker, állapot, motor, értesítés, tárolás, app)
 go test -race ./...
 ```
-A GitHub Actions minden pushnál lefuttatja a teszteket Linuxon és Windowson is. Lefordítja az exe-t, majd **valódi Windows-gépen elindítja** (`--selftest`), és ellenőrzi, hogy a tálca, a WebView2 ablak és a JS–Go híd működik. Az exe letölthető artefaktként.
+A GitHub Actions minden pushnál lefuttatja a teszteket Linuxon és Windowson is; a közös mód párhuzamossági tesztjeit Windowson (NTFS) tízszer egymás után, hogy a ritka versenyhelyzetek is kibukjanak. Lefordítja az exe-t, majd **valódi Windows-gépen elindítja** (`--selftest`, `--selftest-dialog`), és ellenőrzi, hogy a tálca, a WebView2 ablak, a JS–Go híd és a fájlválasztó működik. Az exe letölthető artefaktként.
 
 ### Felület fejlesztése böngészőben
 ```
