@@ -13,6 +13,7 @@ type FileInfo struct {
 	Name    string    `json:"name"`
 	ModTime time.Time `json:"modTime"`
 	Size    int64     `json:"size"`
+	IsDir   bool      `json:"-"`
 }
 
 // FS abstracts the file system so the checker can be tested with fakes.
@@ -32,7 +33,7 @@ func (OSFS) Stat(path string) (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-	return FileInfo{Path: path, Name: st.Name(), ModTime: st.ModTime(), Size: st.Size()}, nil
+	return FileInfo{Path: path, Name: st.Name(), ModTime: st.ModTime(), Size: st.Size(), IsDir: st.IsDir()}, nil
 }
 
 // ListFiles implements FS.

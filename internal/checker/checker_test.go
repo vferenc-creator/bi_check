@@ -103,7 +103,7 @@ func (f *fakeFS) Stat(p string) (FileInfo, error) {
 		return fi, nil
 	}
 	if f.dirs[strings.ToLower(p)] {
-		return FileInfo{Path: p}, nil
+		return FileInfo{Path: p, IsDir: true}, nil
 	}
 	parent := strings.ToLower(p[:strings.LastIndex(p, `\`)])
 	if f.dirs[parent] {
@@ -317,6 +317,9 @@ func TestOSFS(t *testing.T) {
 	if r := c.Check(missing, ref, false); r.Kind != NotFound {
 		t.Fatalf("missing local folder: %+v", r)
 	}
+	if r := c.Check(dir, ref, false); r.Kind != Found || r.File.Size != 5 {
+		t.Fatalf("folder on the real file system: %+v", r)
+	}
 }
 
 // Many items on one server: calls beyond the per-server limit wait in line
@@ -412,5 +415,34 @@ func TestConcurrentListingsShareOneRequest(t *testing.T) {
 	wg.Wait()
 	if n := f.lists.Load(); n != 1 {
 		t.Fatalf("expected 1 listing request, got %d", n)
+	}
+}
+
+// A folder (with or without a trailing \*) is watched for any new file;
+// Windows/Office helper files do not count.
+func TestFolderWatch(t *testing.T) {
+	f := newFake()
+	f.addFile(`\\EFS\Groups\BI\in\a.csv`, ref.Add(-2*time.Hour), 10)
+	f.addFile(`\\EFS\Groups\BI\in\b_20261008.csv`, ref.Add(-time.Hour), 20)
+	f.addFile(`\\EFS\Groups\BI\in\Thumbs.db`, ref, 1)
+	f.addFile(`\\EFS\Groups\BI\in\~$riport.xlsx`, ref, 1)
+	f.addFile(`\\EFS\Groups\BI\ures\x\y.csv`, ref, 1) // "ures" only has a subfolder
+	c := New(f, Options{})
+	for _, p := range []string{`\\EFS\Groups\BI\in`, `\\EFS\Groups\BI\in\*`} {
+		r := c.Check(p, ref, false)
+		if r.Kind != Found || r.File.Name != "b_20261008.csv" || r.Matches != 2 {
+			t.Fatalf("%s: %+v", p, r)
+		}
+	}
+	if r := c.Check(`\\EFS\Groups\BI\ures`, ref, false); r.Kind != NotFound || r.Reason != "A mappában nincs fájl." {
+		t.Fatalf("empty folder: %+v", r)
+	}
+	// File name fragment: everything starting with "b_".
+	if r := c.Check(`\\EFS\Groups\BI\in\b_*`, ref, false); r.Kind != Found || r.File.Size != 20 {
+		t.Fatalf("prefix: %+v", r)
+	}
+	// An explicit "~$" pattern still sees Office lock files.
+	if r := c.Check(`\\EFS\Groups\BI\in\~$*`, ref, false); r.Kind != Found {
+		t.Fatalf("explicit ~$: %+v", r)
 	}
 }

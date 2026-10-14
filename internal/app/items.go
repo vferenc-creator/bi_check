@@ -89,6 +89,9 @@ func (a *App) normalizeItem(it *model.Item) (warnings []string, err error) {
 	it.Group = strings.TrimSpace(it.Group)
 	it.Owner = strings.TrimSpace(it.Owner)
 	it.Path = CleanPath(it.Path)
+	if t := strings.TrimRight(it.Path, `\/`); len(t) > 3 {
+		it.Path = t // a folder typed with a trailing backslash
+	}
 	if it.Name == "" {
 		return nil, errors.New("a név megadása kötelező")
 	}
@@ -393,6 +396,30 @@ func (a *App) registerItemAPI() {
 			}
 		}
 		out.Suggestions = pathpattern.Suggest(out.Path)
+		return out, nil
+	})
+
+	// browseItemFolder picks the folder of a "folder" or "file name pattern" item.
+	a.register("browseItemFolder", func(current string) (BrowseResult, error) {
+		current = CleanPath(current)
+		if i := strings.IndexAny(current, "*?{"); i >= 0 {
+			current = current[:i]
+			if j := strings.LastIndexAny(current, `\/`); j > 0 {
+				current = current[:j]
+			}
+		}
+		p, ok := a.P.FolderDialog("Figyelendő mappa kiválasztása", current)
+		if !ok {
+			return BrowseResult{}, nil
+		}
+		out := BrowseResult{Path: p}
+		if driveRe.MatchString(p) {
+			if unc, ok := a.P.ToUNC(p); ok {
+				out.Path, out.Converted = unc, true
+			} else {
+				out.Local = true
+			}
+		}
 		return out, nil
 	})
 

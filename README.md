@@ -81,6 +81,19 @@ Hasznos billentyűk: `F5` minden elem ellenőrzése most · `Ctrl+N` új elem ·
 
 ## Útvonalak és minták
 
+### Mit figyeljen? Fájl, fájlnév minta vagy mappa
+A szerkesztő *Útvonal* részén három mód közül lehet választani:
+
+| Mód | Mit kell megadni | Mikor „érkezett meg”? |
+|---|---|---|
+| **Fájl** | egy konkrét fájl teljes útvonala (*Tallózás…*) | ha a fájl az elvárt időpont után módosult |
+| **Fájlnév minta** | a **mappa** (*Mappa…* gomb) és a **fájlnév minta**, pl. `sales_` vagy `riport_{yyyyMMdd}*.xlsx` | ha a legfrissebb illeszkedő fájl az elvárt időpont után módosult |
+| **Mappa** | csak a **mappa** | ha a mappába bármilyen új fájl érkezett (a legfrissebb dönt) |
+
+- **Fájlnév-részlet:** ha a mintában nincs `*`, a program a végére teszi, vagyis a megadott résszel **kezdődő** fájlokat figyeli (`riport_` → `riport_*`). Így a dátumozott nevű fájlok (`riport_20261014.csv`, `riport_20261015.csv`…) is követhetők. Ha a részlet bárhol lehet a névben: `*riport*`.
+- **Mappa módban** almappákat nem néz, és a Windows/Office segédfájlok (`Thumbs.db`, `desktop.ini`, `~$…` ideiglenes Office-fájlok) nem számítanak.
+- Ha *Fájl* módban mappát ad meg, a program azt is mappaként kezeli.
+
 ### UNC és csatolt meghajtók
 A program **mindig UNC útvonallal dolgozik**, mert a meghajtóbetűk felhasználónként eltérnek. Ha csatolt meghajtóról ad meg vagy tallóz fájlt (`M:\BI\export.xlsx`), automatikusan átalakítja (`\\EFS-FSRHQ\Groups\BI\export.xlsx`); az átalakítás a `WNetGetConnection` Windows-hívással történik. Helyi útvonal (`C:\…`) is használható, erre a program figyelmeztet.
 

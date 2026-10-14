@@ -690,6 +690,96 @@ async function openEditor(item) {
     }
   });
 
+  // ---- What is watched: one file, a file name pattern in a folder, or any
+  // file in a folder. All three end up in it.path ("…\\sales_*", "…\\*").
+  const splitPath = p => {
+    p = p || "";
+    const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+    return i < 0 ? { dir: "", name: p } : { dir: p.slice(0, i), name: p.slice(i + 1) };
+  };
+  const joinPath = (dir, name) => {
+    dir = (dir || "").replace(/[\\/]+$/, "");
+    if (!dir) return "";
+    return dir + (dir.includes("/") && !dir.includes("\\") ? "/" : "\\") + name;
+  };
+  const modeOf = p => { const n = splitPath(p).name; return n === "*" ? "folder" : /[*?{]/.test(n) ? "pattern" : "file"; };
+  // A name fragment without wildcard means "starts with": sales_ → sales_*
+  const effName = v => { v = (v || "").trim(); return !v ? "*" : /[*?]/.test(v) ? v : v + "*"; };
+  let pathMode = it.path ? modeOf(it.path) : "file";
+  const pathBox = h("div");
+  const dirInput = h("input", { class: "input mono grow", placeholder: "\\\\EFS-FSRHQ\\Groups\\BI\\export", spellcheck: false });
+  const nameInput = h("input", { class: "input mono", placeholder: "pl. sales_   vagy   riport_{yyyyMMdd}*.xlsx", spellcheck: false });
+  const fillFields = () => {
+    const sp0 = splitPath(it.path);
+    dirInput.value = pathMode === "file" ? "" : sp0.dir;
+    nameInput.value = pathMode === "pattern" ? sp0.name : "";
+  };
+  const compose = () => {
+    if (pathMode === "file") return;
+    const dir = cleanPath(dirInput.value);
+    it.path = joinPath(dir, pathMode === "folder" ? "*" : effName(nameInput.value));
+    onChange("path");
+  };
+  for (const inp of [dirInput, nameInput]) {
+    inp.addEventListener("input", compose);
+    inp.addEventListener("paste", () => setTimeout(() => { inp.value = cleanPath(inp.value); compose(); }, 0));
+  }
+  dirInput.addEventListener("blur", async () => {
+    dirInput.value = cleanPath(dirInput.value);
+    if (/^[a-zA-Z]:[\\/]/.test(dirInput.value)) {
+      try {
+        const r = await api("toUNC", dirInput.value);
+        if (r.converted) { dirInput.value = r.path; toast("Csatolt meghajtó → UNC: " + r.path); }
+      } catch (_) { /* ignore */ }
+    }
+    compose();
+  });
+  async function browseDir() {
+    try {
+      const r = await api("browseItemFolder", dirInput.value || splitPath(it.path).dir);
+      if (!r.path) return;
+      dirInput.value = r.path;
+      if (!it.name) { const base = r.path.split(/[\\/]/).filter(Boolean).pop() || ""; it.name = base; $("#ed-name").value = base; }
+      if (r.converted) toast("A csatolt meghajtós útvonalat UNC-re alakítottam.");
+      if (r.local) toast("Figyelem: helyi meghajtós útvonal – más gépen nem biztos, hogy elérhető.", true);
+      compose();
+    } catch (e) { fail(e); }
+  }
+  function setPathMode(m) {
+    if (m === pathMode) return;
+    const cur = splitPath(it.path);
+    if (pathMode === "file") {
+      dirInput.value = it.path ? cur.dir : "";
+      nameInput.value = "";
+    }
+    pathMode = m;
+    if (m === "file") {
+      // back to a single file: start from the folder, the user adds the file name
+      if (dirInput.value) it.path = cleanPath(dirInput.value).replace(/[\\/]+$/, "") + "\\";
+      pathInput.value = it.path;
+      onChange("path");
+    } else {
+      compose();
+    }
+    suggestions = [];
+    renderPathFields();
+  }
+  function renderPathFields() {
+    const modes = [["file", "Fájl"], ["pattern", "Fájlnév minta"], ["folder", "Mappa"]];
+    clear(pathBox).append(h("div", { class: "seg", style: { marginBottom: "10px" } },
+      modes.map(([v, l]) => h("button", { class: pathMode === v ? "on" : "", onclick: () => setPathMode(v) }, l))));
+    if (pathMode === "file") {
+      pathBox.append(h("div", { class: "row" }, pathInput, h("button", { class: "btn", onclick: browse }, icon("folder"), "Tallózás…")));
+    } else {
+      pathBox.append(h("label", { class: "field" }, "Mappa",
+        h("div", { class: "row" }, dirInput, h("button", { class: "btn", onclick: browseDir }, icon("folder"), "Mappa…"))));
+      if (pathMode === "pattern") {
+        pathBox.append(h("label", { class: "field", style: { marginTop: "10px" } }, "Fájlnév (minta)", nameInput));
+      }
+    }
+    renderPathHelp();
+  }
+
   async function browse() {
     try {
       const r = await api("browseFile", it.path);
@@ -712,7 +802,7 @@ async function openEditor(item) {
     const hasTok = /\{[^}]+\}/.test(it.path || "");
     if (suggestions.length) {
       pathHelp.append(h("div", { class: "suggest" }, "A fájlnév dátumot tartalmaz. Mintaként figyelje? ",
-        suggestions.map(sg => h("button", { class: "btn sm", style: { margin: "4px 4px 0 0" }, onclick: () => { it.path = sg; pathInput.value = sg; suggestions = []; onChange("path"); } }, h("code", {}, sg.split(/[\\/]/).pop())))));
+        suggestions.map(sg => h("button", { class: "btn sm", style: { margin: "4px 4px 0 0" }, onclick: () => { it.path = sg; pathInput.value = sg; suggestions = []; pathMode = modeOf(sg); fillFields(); renderPathFields(); onChange("path"); } }, h("code", {}, sg.split(/[\\/]/).pop())))));
     }
     if (hasTok) {
       pathHelp.append(h("div", { class: "row wrap", style: { marginTop: "8px" } },
@@ -721,9 +811,20 @@ async function openEditor(item) {
           h("button", { class: it.tokenMode !== "any" ? "on" : "", onclick: () => { it.tokenMode = ""; renderPathHelp(); onChange(); } }, "az elvárt nap dátuma"),
           h("button", { class: it.tokenMode === "any" ? "on" : "", onclick: () => { it.tokenMode = "any"; renderPathHelp(); onChange(); } }, "bármilyen dátum (legfrissebb)"))));
     }
-    pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
-      "Minta: ", h("code", {}, "*"), " és ", h("code", {}, "?"), " a fájlnévben; dátum: ", h("code", {}, "{yyyyMMdd}"), ", ", h("code", {}, "{yyyy-MM-dd}"),
-      ", eltolással ", h("code", {}, "{yyyyMMdd:-1d}"), ". Mintánál a legfrissebb illeszkedő fájl számít."));
+    if (pathMode === "folder") {
+      pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
+        "A mappába érkező bármelyik fájl számít – a legfrissebb módosítási ideje dönt. Almappákat nem néz; a Thumbs.db, desktop.ini és a ", h("code", {}, "~$…"), " Office ideiglenes fájlok nem számítanak."));
+    } else if (pathMode === "pattern") {
+      const n = (nameInput.value || "").trim();
+      pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
+        h("code", {}, "*"), " = bármi, ", h("code", {}, "?"), " = egy karakter, ", h("code", {}, "{yyyyMMdd}"), " = az elvárt nap dátuma (eltolással: ", h("code", {}, "{yyyyMMdd:-1d}"), "). ",
+        "Ha nincs benne ", h("code", {}, "*"), ", a megadott résszel ", h("b", {}, "kezdődő"), " fájlok számítanak; ami bárhol tartalmazza: ", h("code", {}, "*riport*"), ". A legfrissebb illeszkedő fájl dönt.",
+        n ? h("div", { style: { marginTop: "4px" } }, "Figyelt minta: ", h("code", {}, effName(n))) : null));
+    } else {
+      pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
+        "Minta itt is írható: ", h("code", {}, "*"), " és ", h("code", {}, "?"), " a fájlnévben; dátum: ", h("code", {}, "{yyyyMMdd}"), ", ", h("code", {}, "{yyyy-MM-dd}"),
+        ", eltolással ", h("code", {}, "{yyyyMMdd:-1d}"), ". Mintánál a legfrissebb illeszkedő fájl számít. Mappát vagy fájlnév-részletet kényelmesebben a fenti „Fájlnév minta” / „Mappa” füllel adhat meg."));
+    }
   }
 
   // Daily window in which the file may be missing (e.g. a script deletes it
@@ -869,7 +970,7 @@ async function openEditor(item) {
       if (res.matches > 1) testBox.append(h("div", { class: "small muted" }, res.matches + " illeszkedő fájl, a legfrissebb számít."));
       if (res.resolved && res.resolved !== it.path) testBox.append(h("div", { class: "small muted mono", style: { marginTop: "4px", wordBreak: "break-all" } }, "Vizsgált: " + res.resolved));
       for (const w of r.warnings || []) testBox.append(h("div", { class: "small", style: { marginTop: "6px", color: "var(--late)" } }, w));
-      if (r.normPath && r.normPath !== it.path) { it.path = r.normPath; pathInput.value = r.normPath; }
+      if (r.normPath && r.normPath !== it.path) { it.path = r.normPath; pathInput.value = r.normPath; fillFields(); }
     } catch (e) { clear(testBox); testBox.append(h("div", { class: "errbox" }, e.message)); }
   }
 
@@ -909,7 +1010,7 @@ async function openEditor(item) {
             field("Megjegyzés", text(it, "note", { placeholder: "pl. KNIME workflow neve, teendő hiba esetén" }))),
           h("datalist", { id: "ed-groups" }, S.groups.map(g => h("option", { value: g })))),
         h("fieldset", {}, h("legend", {}, "Útvonal"),
-          h("div", { class: "row" }, pathInput, h("button", { class: "btn", onclick: browse }, icon("folder"), "Tallózás…")),
+          pathBox,
           pathHelp),
         h("fieldset", {}, h("legend", {}, "Ütemezés"), schedBox),
         h("fieldset", {}, h("legend", {}, "Tolerancia"),
@@ -937,7 +1038,8 @@ async function openEditor(item) {
       h("button", { class: "btn", onclick: close }, "Mégse"),
       h("button", { class: "btn primary", onclick: save }, icon("check"), isNew ? "Felvétel" : "Mentés")));
 
-  renderPathHelp();
+  fillFields();
+  renderPathFields();
   renderSchedule();
   updatePreview();
   if (readOnly) {

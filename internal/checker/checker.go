@@ -309,6 +309,10 @@ func (c *Checker) check(path string, ref time.Time, anyDate bool) Result {
 			fi, e = c.fs.Stat(full)
 			return e
 		})
+		if err == nil && fi.IsDir {
+			// A folder was given: the newest file in it counts.
+			return c.check(joinPath(full, "*"), ref, anyDate)
+		}
 		if err == nil {
 			c.serverOK(server)
 			fi.Path = full
@@ -326,6 +330,9 @@ func (c *Checker) check(path string, ref time.Time, anyDate bool) Result {
 	c.serverOK(server)
 	var matched []FileInfo
 	for _, f := range files {
+		if junk(f.Name) && !strings.HasPrefix(r.File, "~") {
+			continue
+		}
 		if r.Match(f.Name) {
 			matched = append(matched, f)
 		}
@@ -334,6 +341,9 @@ func (c *Checker) check(path string, ref time.Time, anyDate bool) Result {
 	if len(matched) == 0 {
 		res.Kind = NotFound
 		res.Reason = "Nincs a mintára illeszkedő fájl a mappában."
+		if r.File == "*" {
+			res.Reason = "A mappában nincs fájl."
+		}
 		return res
 	}
 	sort.Slice(matched, func(i, j int) bool {
@@ -387,6 +397,22 @@ func (c *Checker) list(server string, r *pathpattern.Resolved) ([]FileInfo, erro
 	c.mu.Unlock()
 	close(call.done)
 	return call.files, call.err
+}
+
+// junk reports Windows/Office helper files that are never an output:
+// thumbnail caches, folder settings and Office lock files ("~$x.xlsx").
+func junk(name string) bool {
+	n := strings.ToLower(name)
+	return n == "thumbs.db" || n == "desktop.ini" || strings.HasPrefix(n, "~$")
+}
+
+// joinPath appends name to dir with the separator dir already uses.
+func joinPath(dir, name string) string {
+	dir = strings.TrimRight(dir, `\/`)
+	if strings.Contains(dir, "/") && !strings.Contains(dir, `\`) {
+		return dir + "/" + name
+	}
+	return dir + `\` + name
 }
 
 // dropListing forgets a cached listing of the folder of resolved (before a
