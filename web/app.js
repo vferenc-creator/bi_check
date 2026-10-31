@@ -318,6 +318,8 @@ function go(view, opts) {
 function render() {
   renderSidebar();
   renderSummary();
+  document.body.classList.toggle("view-db", S.view === "db");
+  if (S.view === "db" && typeof dbMounted === "function" && dbMounted()) return;
   const main = clear($("#main"));
   (views[S.view] || views.items)(main);
 }
@@ -343,6 +345,7 @@ function renderSidebar() {
   }
   sb.append(h("div", { class: "spacer" }));
   if (teamOn()) sb.append(nav("trash", "Lomtár", "trash", S.snap.team.trash || undefined, { active: S.view === "trash", onclick: () => go("trash") }));
+  if (typeof views.db === "function") sb.append(nav("db", "Adatbázis", "db", undefined, { active: S.view === "db", onclick: () => go("db") }));
   sb.append(nav("events", "Eseménynapló", "calendar", undefined, { active: S.view === "events", onclick: () => go("events") }));
   sb.append(nav("settings", "Beállítások", "gear", undefined, { active: S.view === "settings", onclick: () => go("settings") }));
   sb.append(nav("about", "Névjegy", "info", undefined, { active: S.view === "about", onclick: () => go("about") }));
@@ -1869,6 +1872,8 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
   const tbCard = h("div", { class: "card", id: "tbCard" });
   grid.append(tbCard);
   drawThunderbird(tbCard, row, sw);
+
+  if (typeof dbSettingsCard === "function") grid.append(dbSettingsCard());
 
   grid.append(h("div", { class: "card" },
     h("div", { class: "card-h" }, icon("folder"), h("h3", {}, "Adatok")),

@@ -19,6 +19,14 @@ var stylesCSS string
 //go:embed app.js
 var appJS string
 
+// The "Adatbázis" tab (database map) lives in its own files.
+//
+//go:embed dbmap.js
+var dbmapJS string
+
+//go:embed dbmap.css
+var dbmapCSS string
+
 // Page returns the complete UI as one HTML document (CSS, JS and the icon
 // inlined), suitable for WebView2's NavigateToString or a dev HTTP server.
 func Page() string {
@@ -31,8 +39,8 @@ func Page() string {
 		"{{ICON_LIGHT}}", iconLight,
 		"{{ICON}}", icon,
 		"{{BRANDVARS}}", b.CSSVariables(),
-		"{{STYLES}}", stylesCSS,
-		"{{SCRIPT}}", appJS,
+		"{{STYLES}}", stylesCSS+"\n"+dbmapCSS,
+		"{{SCRIPT}}", appJS+"\n"+dbmapJS,
 	)
 	return r.Replace(indexHTML)
 }

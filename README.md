@@ -37,7 +37,7 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 5. [Állapotok](#állapotok)
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
-8. [Közös mód (csapat)](#közös-mód-csapat) · [E-mailek figyelése (Thunderbird)](#e-mailek-figyelése-thunderbird) · [Import/export](#importexport)
+8. [Közös mód (csapat)](#közös-mód-csapat) · [E-mailek figyelése (Thunderbird)](#e-mailek-figyelése-thunderbird) · [Adatbázis-térkép](#adatbázis-térkép-ms-sql-csak-olvasás) · [Import/export](#importexport)
 9. [Beállítások](#beállítások)
 10. [Hol tárolja az adatokat?](#hol-tárolja-az-adatokat)
 11. [Parancssori kapcsolók](#parancssori-kapcsolók)
@@ -316,6 +316,60 @@ A BI Monitor frissítésekor a telepített bővítmény is frissül (a Thunderbi
 
 **Biztonság:** a kapcsolat csak a saját gépen belül él (`127.0.0.1`, alapból a 47231-es port – nem nyit tűzfalat), minden kérésnek a párosító kulcsot kell hoznia, és böngészőből (weboldalról) nem érhető el. Új kulcs: *Beállítások → Thunderbird → Új kulcs* (utána a bővítményben is cserélni kell).
 
+## Adatbázis-térkép (MS SQL, csak olvasás)
+
+Az **Adatbázis** fülön a csapat BI adatbázisát (Microsoft SQL Server) lehet áttekinteni és dokumentálni: egy térképen látszik az összes tábla és nézet a mezőivel, a kulcsokkal és a táblák közötti kapcsolatokkal; a táblákhoz és mezőkhöz magyarázat írható, és bármelyik tábla sorai megnézhetők, szűrhetők.
+
+**A program csak olvas.** Az adatbázisba soha nem ír, és magától semmit nem kérdez le: csak akkor fordul a szerverhez, ha valaki megnyomja a *Szerkezet lekérése*, az *Első 100 sor* vagy a *Teljes tábla* gombot. A szerkezetet a rendszerkatalógusból (`sys.tables`, `sys.columns`, kulcsok, becsült sorszám, `MS_Description`) kéri le; sorokat csak `SELECT TOP (n) * FROM [séma].[tábla]` formában, és csak a lekért szerkezetben szereplő táblákra. Felhasználó által írt SQL nem fut.
+
+### Beállítás
+
+*Beállítások → Adatbázis (csak olvasás)*, vagy az Adatbázis fülön a fogaskerék:
+
+| Mező | Példa / jelentés |
+|---|---|
+| Szerver | `EF-SQL01`, példány: `EF-SQL01\BI`, port: `EF-SQL01,1433` |
+| Adatbázis | `BI` |
+| Bejelentkezés | **Windows-bejelentkezés** (ajánlott: a bejelentkezett Windows-felhasználó jogaival) vagy **SQL Server-felhasználó** (felhasználónév + jelszó) |
+| Titkosítás | alapból titkosított kapcsolat, a belső szerver tanúsítványát elfogadja; régi szervereknél „csak a bejelentkezés titkosított” |
+| Időkorlát | a szerkezet és az első 100 sor lekérésére (mp) |
+| „Teljes tábla” legfeljebb | ennyi sort tölt be egy táblából (alap: 100 000; nagyon széles tábláknál a gép memóriája miatt kevesebbet) |
+
+A *Kapcsolat tesztelése* megmutatja a szervert, az adatbázist, a bejelentkezett felhasználót és a táblák számát, és **figyelmeztet, ha a felhasználónak írási joga is van** – a program ettől még csak olvas, de a legbiztonságosabb egy csak olvasási jogú (`db_datareader`) felhasználó vagy Windows-csoport.
+
+Az SQL jelszó nem kerül a `settings.json`-ba: külön fájlban, a Windows saját titkosításával (DPAPI) tárolódik, és csak ugyanaz a Windows-felhasználó tudja visszafejteni. A kapcsolati beállítások gépenként (személyesen) tárolódnak.
+
+Kipróbáláshoz a szerver mezőbe `(demo)` írható: ekkor egy beépített minta adatbázist mutat (önköltség, értékesítés, partnerek).
+
+### A térkép
+
+- **Szerkezet lekérése:** lekéri az összes táblát, nézetet és mezőt. Az előző lekérés óta **új táblák** és **új mezők** „új” jelölést kapnak (a következő lekérésig), és automatikusan helyet kapnak a térképen. Az adatbázisból **eltűnt táblák** áthúzva/szaggatottan megmaradnak a leírásaikkal együtt; jobb klikk → *Eltávolítás a térképről*.
+- **Kártyák:** fejlécben a tábla neve, alatta a mezők a típusukkal (`?` = NULL lehet), 🔑 elsődleges kulcs, 🔗 hivatkozó mező, narancs pötty = van magyarázat. A sok mezős táblák össze vannak csukva (csak a kulcsok és a kapcsolt mezők látszanak); a ⌃/⌄ gombbal nyitható.
+- **Kapcsolatok:** az adatbázisban definiált idegen kulcsok folytonos vonallal, a csapat által rajzoltak szaggatottal látszanak. A vonal a hivatkozó („sok”) oldalon varjúlábbal, a kulcs („egy”) oldalon egy kis vonással végződik. **Új kapcsolat:** a mező sorának szélén megjelenő pontot húzza rá a másik tábla mezőjére (kulcsról indítva is jó irányba kerül), vagy a részletpanelen *Kapcsolat hozzáadása*. A program javasol is kapcsolatokat: ha egy mező neve egy másik tábla elsődleges kulcsával egyezik (pl. `PartnerID` → `dim.Partner.PartnerID`). Egy vonalra kattintva megjegyzés írható hozzá vagy törölhető; az adatbázis idegen kulcsa elrejthető.
+- **Csoportok:** színes területek a térképen (pl. *Önköltség*, *Értékesítés*, *Partnerelemzés*). *Csoport* gomb → név, szín és a táblák kipipálása; jobb klikk egy táblán → *Csoportba: …*. A csoport címkéjét húzva a csoport összes táblája mozog. A bal oldali lista csoportonként mutatja a táblákat.
+- **Jegyzetek:** öntapadós cetlik a térképen (dupla kattintás: szerkesztés, színváltás, törlés).
+- **Mozgatás:** üres területet húzva a térkép mozog, görgővel nagyít; a kártyák a fejlécüknél fogva húzhatók. *Elrendezés*: az összes tábla automatikus elrendezése csoportonként, a kapcsolódók egymás mellé. Minden módosítás **visszavonható** (Ctrl+Z / Ctrl+Y, vagy a jobb alsó gombok).
+- **Részletpanel** (kattintás egy táblára): a tábla leírása, csoportja, a mezők listája egyenként írható magyarázattal, a kapcsolatok és a javaslatok. Ha az adatbázisban már van `MS_Description` leírás, az is megjelenik.
+- **Keresés:** a bal oldali mező táblanévben, mezőnévben és a magyarázatokban is keres, a térképen kiemeli a találatokat.
+
+### Sorok megnézése
+
+A részletpanelen vagy jobb klikkel: **Első 100 sor** vagy **Teljes tábla** (a beállított korlátig; a betöltés közben megszakítható). A táblázatban:
+
+- minden oszlop látszik, a sorok görgetve töltődnek (több százezer sornál is gyors);
+- **oszloponkénti szűrő:** szöveg = tartalmazza; `>100`, `<=5`, `=HU`, `!=0`; `10..20` tartomány; `üres` / `!üres` (NULL); dátumnál `=2024-03` = az adott hónap; számoknál a tizedesvessző is jó (`<3,5`);
+- **keresés** az összes mezőben, **rendezés** az oszlopfejlécre kattintva (növekvő → csökkenő → eredeti), az oszlopszélesség a fejléc szélén húzható;
+- az oszlopnév melletti ⓘ: üres (NULL) értékek száma, különböző értékek, legkisebb és legnagyobb érték (a szűrt sorokra);
+- cella kijelölése kattintással, másolás Ctrl+C-vel vagy dupla kattintással.
+
+A szűrés és a rendezés a már betöltött sorokon, a gépen történik – a szerverhez ilyenkor nem fordul újra.
+
+### Közös térkép
+
+Közös módban a térkép (leírások, kapcsolatok, csoportok, jegyzetek, elrendezés és az utoljára lekért szerkezet) a közös mappa **külön almappájában** van: `adatbazis-terkep\<szerver>__<adatbázis>.json` és `.schema.json`. Így amit az egyik gépen leírnak vagy összekötnek, az a másikon is látszik (az Adatbázis fül 20 másodpercenként megnézi, változott-e). A módosítások apró lépésenként mentődnek, rövid zárolással, így ha ketten egyszerre dolgoznak, egyikük változtatása sem vész el. A közös riportlista fájljait (`bicheck.json`, `reports\`, `locks\`) ez a funkció nem érinti, és a régebbi programverziók sem zavarják. Ha a közös mappa épp nem érhető el, a gépen tárolt másolat látszik (módosítani ilyenkor nem lehet). Közös mód nélkül a térkép a gép helyi adatmappájában van.
+
+---
+
 ## Import/export
 
 **Export / import** (lista fejléce vagy Beállítások → Adatok):
@@ -349,6 +403,8 @@ A bal oldali menü **Beállítások** oldalán. A módosítások a jobb felső *
 | `%LOCALAPPDATA%\EnergofishMonitor\logs\monitor.log` | napló (5 MB-onként forgatva) |
 | `%LOCALAPPDATA%\EnergofishMonitor\WebView2\` | a felület böngészőmotorjának gyorsítótára |
 | `%LOCALAPPDATA%\EnergofishMonitor\shared-cache.json` | közös módban a közös lista helyi másolata (offline működéshez) |
+| `%LOCALAPPDATA%\EnergofishMonitor\adatbazis-terkep\` | az adatbázis-térkép (közös módban a közös térkép helyi másolata) |
+| `%APPDATA%\EnergofishMonitor\sql-jelszo.bin` | az SQL Server-jelszó (csak SQL-bejelentkezésnél), Windows DPAPI-val titkosítva |
 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\EnergofishBIMonitor` | automatikus indítás |
 | *közös mappa* (közös módban) | a riportdefiníciók és zárak – lásd [Közös mód](#közös-mód-csapat) |
 
@@ -392,6 +448,10 @@ Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
 - **Közös mód – „Szerkeszti: X”, de X már nem szerkeszti:** ha az életjel 10 perce nem frissült, a zár magától lejár. Ha sürgős, a *Zár feloldása* gombbal azonnal feloldható (ez naplózódik).
 - **Közös mód – offline sáv:** a közös mappa nem érhető el (VPN, hálózat, jogosultság). A figyelés közben fut tovább, visszatéréskor automatikusan frissül.
 - **Közös mód – „újabb programverzió kezeli”:** frissítse a BI Monitort a [legfrissebb kiadásra](https://github.com/vferenc-creator/bi_check/releases/latest).
+- **Adatbázis – „a bejelentkezés nem sikerült”:** Windows-bejelentkezésnél a bejelentkezett Windows-felhasználónak (vagy csoportjának) kell joga legyen a szerverhez és az adatbázishoz; SQL-felhasználónál a név/jelszó hibás. A *Kapcsolat tesztelése* megmutatja, ki próbált bejelentkezni.
+- **Adatbázis – „a szerver nem érhető el”:** a szerver neve, a példány (`SZERVER\PÉLDÁNY`) vagy a port (`SZERVER,1433`) hibás, vagy tűzfal/VPN zárja el. Nevesített példánynál az SQL Browser szolgáltatásnak futnia kell, különben portot kell megadni.
+- **Adatbázis – „titkosítási hiba”:** régi SQL Servernél válassza a *Titkosítás → Csak a bejelentkezés titkosított* lehetőséget; ha a szerver valódi tanúsítvánnyal rendelkezik, a *tanúsítvány-ellenőrzéssel* változat is használható.
+- **Adatbázis – egyes részek nem látszanak (pl. sorok száma):** a felhasználónak nincs joga a katalógus egy részéhez; a térkép ettől működik, a lekérés után figyelmeztetés jelzi, mi maradt ki.
 - **Napló:** `%LOCALAPPDATA%\EnergofishMonitor\logs\monitor.log`.
 
 ---
@@ -420,11 +480,13 @@ internal/engine/     háttérütemező: mikor mit kell ellenőrizni, „Elérhet
 internal/notify/     értesítési szabályok (ismétlésgátlás, csendes időszak, összevonás)
 internal/store/      settings.json + history.db
 internal/mailwatch/  e-mail figyelés: a Thunderbird-bővítmény jelentései → ellenőrzési eredmény
+internal/dbmap/      adatbázis-térkép: MS SQL szerkezet és sorok (csak olvasás), térkép-dokumentum, közös tárolás, szűrés
+internal/secret/     jelszó tárolása Windows DPAPI-val
 internal/teamstore/  ★ közös mód: riportfájlok, zárolás, ütközéskezelés, offline gyorsítótár – párhuzamos tesztekkel
 internal/app/        platformfüggetlen alkalmazásmag + a felület RPC API-ja
 internal/desktop/    Windows héj: tálca, WebView2 ablak, értesítések
 internal/winapi/     Win32 hívások
-web/                 index.html, styles.css, app.js (go:embed-del az exe-be kerül)
+web/                 index.html, styles.css, app.js, dbmap.js/.css (go:embed-del az exe-be kerül)
 thunderbird/         a Thunderbird-bővítmény (MailExtension): background.js, popup, options, lib.js + tesztek
 tools/genres/        ikon, manifest, verzióinfó → .syso (a brandingből)
 ```

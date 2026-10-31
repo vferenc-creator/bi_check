@@ -63,6 +63,7 @@ type App struct {
 	tb   tbState
 
 	drift driftCache // gentle "comes later and later" hints
+	db    dbState    // the read-only database browser ("Adatbázis" tab)
 
 	// OnCall, if set, is invoked before every RPC (used by --selftest).
 	OnCall func(method string)
@@ -131,6 +132,7 @@ func New(p Platform, opt Options) (*App, error) {
 	a.registerAll()
 	a.registerItemAPI()
 	a.registerHistoryAPI()
+	a.registerDBAPI()
 	a.registerTransferAPI()
 	a.registerTeamAPI()
 	a.registerSharedModeAPI()

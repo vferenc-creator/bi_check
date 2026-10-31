@@ -301,6 +301,19 @@ type ThunderbirdSettings struct {
 	InstalledVersion string   `json:"installedVersion,omitempty"`
 }
 
+// DBSettings: connection of the database browser (read only).
+type DBSettings struct {
+	Server   string `json:"server"`   // EF-SQL01, EF-SQL01\BI, EF-SQL01,1433 or "(demo)"
+	Database string `json:"database"` // database name
+	Auth     string `json:"auth"`     // "windows" (default) or "sql"
+	User     string `json:"user,omitempty"`
+	Encrypt  string `json:"encrypt"` // "trust" (default), "strict", "off"
+	// TimeoutSec for the structure query and the first rows.
+	TimeoutSec int `json:"timeoutSec"`
+	// MaxRows: at most this many rows are loaded for "Teljes tábla".
+	MaxRows int `json:"maxRows"`
+}
+
 // DefaultThunderbirdPort is the local port of the add-on API.
 const DefaultThunderbirdPort = 47231
 
@@ -340,6 +353,9 @@ type Settings struct {
 	MutedGroups []string            `json:"mutedGroups,omitempty"`
 	Team        TeamSettings        `json:"team"`
 	Thunderbird ThunderbirdSettings `json:"thunderbird"`
+	// Database: the read-only connection of the "Adatbázis" tab (personal,
+	// per computer; the password is stored separately, encrypted).
+	Database DBSettings `json:"database"`
 
 	Items []Item `json:"items"`
 }
@@ -363,6 +379,7 @@ func DefaultSettings() Settings {
 			Quiet:      QuietHours{From: "22:00", To: "06:00"},
 		},
 		Thunderbird: ThunderbirdSettings{Port: DefaultThunderbirdPort, StaleMin: 15},
+		Database:    DBSettings{Auth: "windows", Encrypt: "trust", TimeoutSec: 30, MaxRows: 100000},
 		Items:       []Item{},
 	}
 }
@@ -378,6 +395,18 @@ func (s *Settings) Normalize() {
 	}
 	if s.Thunderbird.StaleMin <= 0 {
 		s.Thunderbird.StaleMin = d.Thunderbird.StaleMin
+	}
+	if s.Database.Auth != "sql" {
+		s.Database.Auth = "windows"
+	}
+	if s.Database.Encrypt != "strict" && s.Database.Encrypt != "off" {
+		s.Database.Encrypt = "trust"
+	}
+	if s.Database.TimeoutSec < 5 || s.Database.TimeoutSec > 600 {
+		s.Database.TimeoutSec = d.Database.TimeoutSec
+	}
+	if s.Database.MaxRows < 100 || s.Database.MaxRows > 1_000_000 {
+		s.Database.MaxRows = d.Database.MaxRows
 	}
 	if s.TimeoutSec < 1 {
 		s.TimeoutSec = d.TimeoutSec
