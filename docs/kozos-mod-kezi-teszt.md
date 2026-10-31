@@ -78,6 +78,15 @@ Jelölés: ☐ = kipróbálandó, mellé írja az eredményt / eltérést.
 | 8.1 | **A**: egy riportnál „Értesítés nekem” ki | **A** nem kap róla értesítést, **B** igen | ☐ |
 | 8.2 | **B**: Beállítások → Értesítések → egy csoport kikapcsolása | Csak **B**-re hat | ☐ |
 
+## 8/b. E-mailek figyelése közös módban (Thunderbird)
+| # | Lépés | Elvárt eredmény | ☐ |
+|---|---|---|---|
+| 8.4 | **A** és **B**: Beállítások → Thunderbird → *Telepítés a Thunderbirdbe*, Thunderbird újraindítása, kiegészítő engedélyezése | Mindkét gépen „kapcsolódva” | ☐ |
+| 8.5 | **A**: a BI fiók egy kiment riport-levelén jobb gomb → *BI Monitor: figyelés erre az e-mailre…* → Felvétel | A mappa mezőben „fiók / Elküldött”; **B**-n ≤ 30 mp múlva megjelenik az e-mailes elem | ☐ |
+| 8.6 | Mindkét gépen: az elem állapota | Ahol a Thunderbirdben megvan a BI fiók: OK; ahol nincs: „Ismeretlen” (nem „Hiányzik”) | ☐ |
+| 8.7 | **B** szerkeszti az e-mailes elemet (pl. türelmi idő), ment | **A**-n frissül; a tárgy és a mappa megmarad | ☐ |
+| 8.8 | **A** bezárja a Thunderbirdöt 20 percre | **A**-n egy összevont „Thunderbird nem érhető el” értesítés; **B** tovább figyel | ☐ |
+
 ## 9. Programverziók
 | # | Lépés | Elvárt eredmény | ☐ |
 |---|---|---|---|

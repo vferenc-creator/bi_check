@@ -64,7 +64,7 @@ func (s *Store) Create(it model.Item, action string) (Report, error) {
 		action = "created"
 	}
 	st := s.stamp()
-	r := Report{Schema: SchemaVersion, ID: it.ID, Revision: 1, Created: st, Modified: st, Definition: definition(it)}
+	r := Report{Schema: reportSchema(it), ID: it.ID, Revision: 1, Created: st, Modified: st, Definition: definition(it)}
 	addChange(&r, Change{Rev: 1, Stamp: st, Action: action})
 	err := withTimeout(s.opt.Timeout, func() error {
 		if err := os.MkdirAll(s.dir("reports"), 0o755); err != nil {
@@ -134,7 +134,7 @@ func (s *Store) mutate(id string, baseRev int, fn func(r *Report, st Stamp) (Cha
 		}
 		cur.Revision++
 		cur.Modified = st
-		cur.Schema = SchemaVersion
+		cur.Schema = reportSchema(cur.Definition)
 		c.Rev, c.Stamp = cur.Revision, st
 		addChange(&cur, c)
 		if err := s.writeReport(&cur); err != nil {

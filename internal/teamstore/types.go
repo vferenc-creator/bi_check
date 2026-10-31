@@ -28,8 +28,25 @@ import (
 	"bimonitor/internal/model"
 )
 
-// SchemaVersion is the shared-folder format written by this build.
-const SchemaVersion = 1
+// SchemaVersion is the newest report format this build reads and writes.
+//
+//	1: file / file name pattern / folder reports
+//	2: e-mail reports (Thunderbird add-on). Only these are written with 2, so
+//	   an older build sees them, switches to read-only and asks for an
+//	   update instead of silently dropping the e-mail settings on save.
+const SchemaVersion = 2
+
+// folderSchema is the format of bicheck.json (unchanged since 1, so older
+// builds can still share a folder that has no e-mail reports).
+const folderSchema = 1
+
+// reportSchema is the format a report is written with.
+func reportSchema(def model.Item) int {
+	if def.IsEmail() {
+		return 2
+	}
+	return 1
+}
 
 // FolderFormat identifies our shared folders.
 const FolderFormat = "energofish-bicheck-shared"

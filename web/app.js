@@ -749,7 +749,9 @@ function suggestFromMail(it, d) {
     break;
   }
   it.kind = "email";
-  it.mail = { subject, folder: d.folder || "", party: "" };
+  // account + folder: in shared mode a Thunderbird without this account
+  // shows "unknown" instead of a false "missing"
+  it.mail = { subject, folder: d.account && d.folder ? d.account + " / " + d.folder : d.folder || "", party: "" };
   it.name = name || d.subject;
   const hh = String(sent.getHours()).padStart(2, "0"), mm = String(Math.floor(sent.getMinutes() / 5) * 5).padStart(2, "0");
   it.schedule = { type: "daily", times: [hh + ":" + mm] };
@@ -859,7 +861,7 @@ async function openEditor(item, draft) {
   const nameInput = h("input", { class: "input mono", placeholder: "pl. sales_   vagy   riport_{yyyyMMdd}*.xlsx", spellcheck: false });
   // e-mail mode (Thunderbird add-on)
   const subjInput = h("input", { class: "input", placeholder: "pl. Napi értékesítési riport {yyyy.MM.dd}", spellcheck: false });
-  const mfolderInput = h("input", { class: "input", placeholder: "pl. Elküldött  (üres: minden figyelt mappa)", spellcheck: false });
+  const mfolderInput = h("input", { class: "input", placeholder: "pl. BI riport / Elküldött  (üres: minden figyelt mappa)", spellcheck: false });
   const partyInput = h("input", { class: "input", placeholder: "pl. vezetes@energofish.hu", spellcheck: false });
   const composeMail = () => {
     it.mail = { subject: subjInput.value.trim(), folder: mfolderInput.value.trim(), party: partyInput.value.trim() };
@@ -999,6 +1001,7 @@ async function openEditor(item, draft) {
         "A BI Monitor Thunderbird-bővítménye a figyelt mappákban (alapból: Elküldött) keresi az ilyen tárgyú leveleket; a levél dátuma számít érkezésnek. ",
         "Ha nincs benne ", h("code", {}, "*"), ", a megadott szöveget ", h("b", {}, "tartalmazó"), " tárgyak számítanak. Dátum: ", h("code", {}, "{yyyy.MM.dd}"), ", ", h("code", {}, "{yyyyMMdd}"),
         ", eltolással ", h("code", {}, "{yyyy.MM.dd:-1d}"), ". A kis- és nagybetű nem számít."),
+        teamOn() ? h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } }, "Közös mód: az e-mailt minden gép ellenőrzi, ahol be van kapcsolva a Thunderbird-kapcsolat. Adja meg a mappánál a fiókot is (pl. ", h("code", {}, "BI riport / Elküldött"), ") – ahol ez a fiók nincs meg a Thunderbirdben, ott az elem „Ismeretlen” marad, és nem jelez tévesen.") : "",
         tbOn ? "" : h("div", { class: "errbox", style: { marginTop: "8px" } }, "Ezen a gépen nincs bekapcsolva a Thunderbird-kapcsolat – itt az e-mail „Ismeretlen” marad. Bekapcsolás: Beállítások → Thunderbird."));
     } else if (pathMode === "folder") {
       pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },

@@ -215,6 +215,18 @@ func (h *Hub) Check(it model.Item, ref time.Time, anyDate, enabled bool, stale t
 	match := x.Matcher(ref, anyDate)
 	folder := strings.ToLower(strings.TrimSpace(it.Mail.Folder))
 	party := strings.ToLower(strings.TrimSpace(it.Mail.Party))
+	// Shared mode: every computer with Thunderbird checks the e-mail items.
+	// A Thunderbird without the sending account must not report "missing".
+	if len(info.Folders) == 0 {
+		res.Kind = checker.NoData
+		res.Reason = "Ezen a gépen a Thunderbird-bővítmény nem figyel egyetlen mappát sem (bővítmény beállításai → Figyelt mappák)."
+		return res
+	}
+	if folder != "" && !anyContains(info.Folders, folder) {
+		res.Kind = checker.NoData
+		res.Reason = fmt.Sprintf("Ezen a gépen a Thunderbird nem figyel „%s” mappát – itt nem ellenőrizhető (az e-mailt az a gép figyeli, ahol ez a fiók megvan). Figyelt mappák: %s.", it.Mail.Folder, strings.Join(info.Folders, ", "))
+		return res
+	}
 	var found []checker.FileInfo
 	for _, m := range msgs {
 		if !match(m.Subject) {
@@ -254,6 +266,15 @@ func (h *Hub) Find(id, subject string, date time.Time, path string) (Msg, bool) 
 		}
 	}
 	return Msg{}, false
+}
+
+func anyContains(list []string, sub string) bool {
+	for _, s := range list {
+		if strings.Contains(strings.ToLower(s), sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func mailPath(m Msg) string {

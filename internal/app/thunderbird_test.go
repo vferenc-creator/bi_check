@@ -164,7 +164,7 @@ func TestMailHubStale(t *testing.T) {
 	if r := h.Check(it, clock, false, true, 15*time.Minute); r.Kind != "unreachable" || !r.ServerProblem {
 		t.Fatalf("add-on never reported: %+v", r)
 	}
-	h.Update(mailwatch.Report{Matches: map[string][]mailwatch.Msg{"x": {{Subject: "Riport ma", Date: clock}}}})
+	h.Update(mailwatch.Report{Folders: []string{"BI / Elküldött"}, Matches: map[string][]mailwatch.Msg{"x": {{Subject: "Riport ma", Date: clock}}}})
 	if r := h.Check(it, clock, false, true, 15*time.Minute); r.Kind != "found" {
 		t.Fatalf("%+v", r)
 	}
@@ -247,4 +247,96 @@ func readXPIConfig(t *testing.T, path string) thunderbird.Config {
 		}
 	}
 	return cfg
+}
+
+// Shared mode: both computers watch the same e-mail item from the shared
+// folder, each through its own Thunderbird. A computer whose Thunderbird
+// does not have the sending account must not report "missing".
+func TestEmailItemsInSharedMode(t *testing.T) {
+	shared := filepath.Join(t.TempDir(), "BI_Check_kozos")
+	os.MkdirAll(shared, 0o755)
+	anna, _ := newUserApp(t, "anna")
+	bela, _ := newUserApp(t, "bela")
+	for _, a := range []*App{anna, bela} {
+		call[enableRes](t, a, "teamEnable", map[string]string{"folder": shared})
+	}
+	keyA := call[TBStatus](t, anna, "tbSave", map[string]any{"enabled": true, "port": freePort(t), "staleMin": 15}).Key
+	keyB := call[TBStatus](t, bela, "tbSave", map[string]any{"enabled": true, "port": freePort(t), "staleMin": 15}).Key
+
+	// Anna adds the e-mail item (as from Thunderbird: account / folder).
+	it := model.NewItem()
+	it.ID = ""
+	it.Name = "Napi értékesítési e-mail"
+	it.Kind = model.KindEmail
+	it.Mail = model.MailRule{Subject: "Napi értékesítés {yyyy.MM.dd}", Folder: "BI riport / Elküldött"}
+	it.Schedule = schedule.Spec{Type: schedule.Daily, Times: []string{"00:00"}}
+	it.GraceMinutes = 0
+	sv := call[SaveResult](t, anna, "saveItem", it)
+	id := sv.View.Item.ID
+
+	// Béla sees it from the shared folder, with the e-mail settings intact.
+	call[Snapshot](t, bela, "teamSyncNow", nil)
+	bv := bela.view(id)
+	if !bv.Item.IsEmail() || bv.Item.Mail.Folder != "BI riport / Elküldött" {
+		t.Fatalf("shared definition: %+v", bv.Item)
+	}
+	// Both Thunderbirds get the rule.
+	for _, c := range []struct {
+		a   *App
+		key string
+	}{{anna, keyA}, {bela, keyB}} {
+		w := tbReq(t, c.a.tbHandler(), "GET", "/api/tb/v1/rules", c.key, nil, nil)
+		if !strings.Contains(w.Body.String(), id) {
+			t.Fatalf("rules: %s", w.Body.String())
+		}
+	}
+
+	wait := func(a *App, want model.Status) ItemView {
+		t.Helper()
+		var v ItemView
+		for i := 0; i < 150; i++ {
+			v = a.view(id)
+			if v.State.Status == want && !v.State.Checking {
+				return v
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("%s: want %s, have %s (%s)", a.opt.Identity.Display, want, v.State.Status, v.State.Reason)
+		return v
+	}
+	now := time.Now().In(anna.Loc)
+	sent := mailwatch.Msg{ID: 5, Subject: "Napi értékesítés " + now.Format("2006.01.02"), Date: now.Add(-time.Minute), Folder: "Elküldött", Account: "BI riport"}
+
+	// Anna's Thunderbird has the BI account: OK.
+	tbReq(t, anna.tbHandler(), "POST", "/api/tb/v1/report", keyA, mailwatch.Report{Folders: []string{"BI riport / Elküldött", "Anna / Elküldött"},
+		Matches: map[string][]mailwatch.Msg{id: {sent}}}, nil)
+	wait(anna, model.StatusOK)
+
+	// Béla's Thunderbird only has his own mailbox: not "missing", just unknown here.
+	tbReq(t, bela.tbHandler(), "POST", "/api/tb/v1/report", keyB, mailwatch.Report{Folders: []string{"Béla / Elküldött"}, Matches: map[string][]mailwatch.Msg{id: {}}}, nil)
+	v := wait(bela, model.StatusUnknown)
+	if !strings.Contains(v.State.Reason, "BI riport / Elküldött") {
+		t.Fatalf("reason: %s", v.State.Reason)
+	}
+	// Once Béla's Thunderbird also has the account, he checks it too.
+	tbReq(t, bela.tbHandler(), "POST", "/api/tb/v1/report", keyB, mailwatch.Report{Folders: []string{"Béla / Elküldött", "BI riport / Elküldött"},
+		Matches: map[string][]mailwatch.Msg{id: {sent}}}, nil)
+	wait(bela, model.StatusOK)
+
+	// Béla edits the e-mail item; Anna's application and Thunderbird follow.
+	lock := call[map[string]any](t, bela, "lockItem", id)
+	if lock["ok"] != true {
+		t.Fatalf("lock: %v", lock)
+	}
+	edit := bela.view(id).Item
+	edit.Mail.Subject = "Napi értékesítési riport {yyyy.MM.dd}"
+	call[SaveResult](t, bela, "saveItem", edit)
+	call[Snapshot](t, anna, "teamSyncNow", nil)
+	if got := anna.view(id).Item.Mail.Subject; got != edit.Mail.Subject {
+		t.Fatalf("anna sees %q", got)
+	}
+	w := tbReq(t, anna.tbHandler(), "GET", "/api/tb/v1/rules", keyA, nil, nil)
+	if !strings.Contains(w.Body.String(), `riport \\d{4}`) {
+		t.Fatalf("anna's Thunderbird gets the new rule: %s", w.Body.String())
+	}
 }

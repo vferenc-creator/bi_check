@@ -82,7 +82,7 @@ func TestInitProbeAndSyncAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Revision != 1 || r.Created.User != `EF\anna` || r.Created.Host != "PC-anna" || r.Schema != SchemaVersion || len(r.Changes) != 1 {
+	if r.Revision != 1 || r.Created.User != `EF\anna` || r.Created.Host != "PC-anna" || r.Schema != 1 || len(r.Changes) != 1 {
 		t.Fatalf("%+v", r)
 	}
 	ev, err := b.Sync()
@@ -359,7 +359,7 @@ func TestHalfWrittenFilesAreIgnored(t *testing.T) {
 func TestNewerSchemaIsReadOnly(t *testing.T) {
 	root, a, b, _, _ := newShared(t)
 	r, _ := a.Create(item("Riport"), "")
-	os.WriteFile(filepath.Join(root, "bicheck.json"), []byte(`{"format":"`+FolderFormat+`","schema":2,"minWriterSchema":2}`), 0o644)
+	os.WriteFile(filepath.Join(root, "bicheck.json"), []byte(`{"format":"`+FolderFormat+`","schema":99,"minWriterSchema":99}`), 0o644)
 	b.Sync()
 	if st := b.Status(); st.ReadOnly == "" || !strings.Contains(st.ReadOnly, "újabb programverzió") {
 		t.Fatalf("expected read-only: %+v", st)
@@ -577,5 +577,45 @@ func TestOwnLockFromEarlierSessionIsTakenOverAtOnce(t *testing.T) {
 	var le *LockedError
 	if _, err := b.Acquire(r.ID); !errors.As(err, &le) {
 		t.Fatalf("bela must respect anna's fresh lock: %v", err)
+	}
+}
+
+// E-mail reports are written with format 2: an older build (format 1) reads
+// them, goes read-only and asks for an update instead of saving the report
+// without its e-mail settings. File reports stay format 1.
+func TestEmailReportSchema(t *testing.T) {
+	root, a, b, _, _ := newShared(t)
+	f, _ := a.Create(item("Fájl"), "")
+	m := item("E-mail")
+	m.Kind, m.Mail = model.KindEmail, model.MailRule{Subject: "Napi riport {yyyy.MM.dd}", Folder: "BI riport / Elküldött"}
+	e, err := a.Create(m, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Schema != 1 || e.Schema != 2 {
+		t.Fatalf("schemas: file %d, e-mail %d", f.Schema, e.Schema)
+	}
+	b.Sync()
+	got, _ := b.Get(e.ID)
+	if !got.Definition.IsEmail() || got.Definition.Mail.Folder != "BI riport / Elküldött" {
+		t.Fatalf("e-mail settings must survive the share: %+v", got.Definition)
+	}
+	if st := b.Status(); st.ReadOnly != "" {
+		t.Fatalf("this build reads format 2: %+v", st)
+	}
+	// What a format-1 build sees: a report newer than itself → read-only.
+	raw, _ := os.ReadFile(filepath.Join(root, "reports", e.ID+".json"))
+	if !strings.Contains(string(raw), `"schema": 2`) {
+		t.Fatalf("file: %s", raw)
+	}
+	// Turned back into a file report → format 1 again.
+	if _, err := a.Acquire(e.ID); err != nil {
+		t.Fatal(err)
+	}
+	m2 := got.Definition
+	m2.Kind, m2.Mail = "", model.MailRule{}
+	r2, err := a.Save(m2, got.Revision)
+	if err != nil || r2.Schema != 1 {
+		t.Fatalf("save: %v %+v", err, r2.Schema)
 	}
 }

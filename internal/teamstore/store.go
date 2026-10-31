@@ -201,7 +201,7 @@ func (s *Store) Init() error {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		m = Manifest{Format: FolderFormat, Schema: SchemaVersion, MinWriterSchema: 1, Created: s.stamp()}
+		m = Manifest{Format: FolderFormat, Schema: folderSchema, MinWriterSchema: 1, Created: s.stamp()}
 		b, _ := json.MarshalIndent(m, "", "  ")
 		// Exclusive create: if two people initialise at the same time, one wins.
 		f, err := os.OpenFile(s.dir(".bicheck-init"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
