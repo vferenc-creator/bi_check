@@ -69,10 +69,89 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
 
+// ---------------------------------------------------------------------------
+// Time field ("ÓÓ:PP"). The native <input type="time"> changed its value on
+// every mouse-wheel tick and was fiddly to type into; this one takes free
+// typing (630, 6:30, 06.30, 18 → 18:00), ↑/↓ steps 5 minutes (Shift: 1 hour)
+// and has a picker list. The wheel scrolls the page, never the value.
+// ---------------------------------------------------------------------------
+function parseClock(s) {
+  s = String(s || "").trim();
+  let hh, mm;
+  const sep = s.match(/^(\d{1,2})\s*[:.,\s]\s*(\d{1,2})$/);
+  if (sep) { hh = +sep[1]; mm = +sep[2]; }
+  else if (/^\d{1,4}$/.test(s)) {
+    if (s.length <= 2) { hh = +s; mm = 0; } else { hh = +s.slice(0, -2); mm = +s.slice(-2); }
+  } else return null;
+  if (hh > 23 || mm > 59) return null;
+  return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+}
+// opts.live: report every valid value while typing (default true); with
+// live=false the value is reported on Enter, blur or picker choice only and
+// the field is emptied afterwards (used for "add a time" boxes).
+function timeField(value, onSet, opts) {
+  opts = Object.assign({ live: true, placeholder: "ÓÓ:PP", step: 30 }, opts || {});
+  let last = parseClock(value) || "";
+  const inp = h("input", { class: "input mono time-in", value: last, placeholder: opts.placeholder, maxlength: 5, inputmode: "numeric", autocomplete: "off", spellcheck: false });
+  const commit = v => {
+    inp.classList.remove("invalid");
+    if (opts.live) { last = v; inp.value = v; onSet(v); }
+    else { onSet(v); inp.value = ""; }
+  };
+  inp.addEventListener("input", () => {
+    const t = inp.value.trim();
+    const v = parseClock(t);
+    inp.classList.toggle("invalid", !!t && !v && t.length >= 3);
+    if (opts.live && v && (t.length >= 4 || /[:.,\s]\d{2}$/.test(t))) { last = v; onSet(v); }
+  });
+  inp.addEventListener("blur", () => {
+    const t = inp.value.trim();
+    if (!t) { if (opts.live) inp.value = last; return; }
+    const v = parseClock(t);
+    if (v) commit(v);
+    else { inp.classList.add("invalid"); toast("Érvénytelen időpont: „" + t + "” – ÓÓ:PP formában adja meg (pl. 06:30 vagy 630).", true); if (opts.live) { inp.value = last; inp.classList.remove("invalid"); } }
+  });
+  inp.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); inp.blur(); if (!opts.live) inp.focus(); return; }
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const base = parseClock(inp.value) || last || "00:00";
+    let m = +base.slice(0, 2) * 60 + +base.slice(3);
+    const d = e.shiftKey ? 60 : 5;
+    m = ((e.key === "ArrowUp" ? Math.floor(m / d) * d + d : Math.ceil(m / d) * d - d) + 1440) % 1440;
+    const v = String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+    inp.value = v;
+    if (opts.live) { last = v; onSet(v); }
+  });
+  const pick = h("button", { class: "btn icon", type: "button", title: "Időpont választása listából", onclick: e => {
+    e.stopPropagation();
+    if ($(".menu.time-menu")) { closeMenus(); return; }
+    closeMenus();
+    const cur = parseClock(inp.value) || last;
+    const times = [];
+    for (let m = 0; m < 1440; m += opts.step) times.push(String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"));
+    if (cur && !times.includes(cur)) { times.push(cur); times.sort(); }
+    const menu = h("div", { class: "menu time-menu" }, times.map(t => h("button", { class: t === cur ? "on" : "", onclick: ev => { ev.stopPropagation(); closeMenus(); commit(t); } }, t)));
+    document.body.append(menu);
+    const r = wrap.getBoundingClientRect();
+    menu.style.left = Math.min(r.left, innerWidth - menu.offsetWidth - 8) + "px";
+    const below = innerHeight - r.bottom - 8;
+    if (below >= 160 || below > r.top) { menu.style.top = (r.bottom + 4) + "px"; menu.style.maxHeight = Math.min(260, below) + "px"; }
+    else { menu.style.maxHeight = Math.min(260, r.top - 8) + "px"; menu.style.top = (r.top - 4 - menu.offsetHeight) + "px"; }
+    const on = menu.querySelector(".on") || menu.querySelector("button:nth-child(" + (Math.floor((8 * 60) / opts.step) + 1) + ")");
+    if (on) menu.scrollTop = on.offsetTop - menu.clientHeight / 2 + on.offsetHeight / 2;
+  } }, icon("clock"));
+  const wrap = h("span", { class: "time-field" }, inp, pick);
+  wrap.input = inp;
+  return wrap;
+}
+
 // Inline SVG icons (stroke style, 24×24).
 const ICONS = {
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',
@@ -443,6 +522,8 @@ function itemRow(r, cols) {
 
 function closeMenus() { $$(".menu").forEach(m => m.remove()); }
 document.addEventListener("click", closeMenus);
+// a scrolled page/dialog would leave a popup menu floating at the old place
+document.addEventListener("scroll", e => { if (!(e.target instanceof Element && e.target.closest(".menu"))) closeMenus(); }, true);
 function showMenu(anchor, entries) {
   closeMenus();
   const m = h("div", { class: "menu", onclick: e => e.stopPropagation() });
@@ -833,7 +914,7 @@ async function openEditor(item) {
     if (!it.gap) it.gap = { enabled: false };
     const g = it.gap;
     const box = h("div", { class: "gap-box" });
-    const tIn = key => h("input", { class: "input narrow", type: "time", value: g[key] || "", oninput: e => { g[key] = e.target.value; onChange("gap"); } });
+    const tIn = key => timeField(g[key], v => { g[key] = v; onChange("gap"); });
     const draw = () => {
       clear(box).append(
         h("div", { class: "row wrap", style: { gap: "10px 16px" } },
@@ -856,10 +937,9 @@ async function openEditor(item) {
     const draw = () => {
       clear(box);
       for (const t of sp.times) box.append(h("span", { class: "tag" }, t, h("button", { title: "Eltávolítás", onclick: () => { sp.times = sp.times.filter(x => x !== t); draw(); onChange(); } }, "×")));
-      const inp = h("input", { class: "input narrow", type: "time", value: "" });
-      const addT = () => { const v = inp.value; if (v && !sp.times.includes(v)) { sp.times.push(v); sp.times.sort(); draw(); onChange(); } };
-      inp.addEventListener("change", addT);
-      box.append(h("span", { class: "time-add" }, inp, h("button", { class: "btn icon", title: "Időpont hozzáadása", onclick: addT }, icon("plus"))));
+      const add = v => { if (v && !sp.times.includes(v)) { sp.times.push(v); sp.times.sort(); draw(); onChange(); setTimeout(() => { const n = box.querySelector(".time-in"); if (n) n.focus(); }, 0); } };
+      const tf = timeField("", add, { live: false, placeholder: "+ ÓÓ:PP" });
+      box.append(h("span", { class: "time-add" }, tf, h("button", { class: "btn icon", title: "Időpont hozzáadása (Enter)", onclick: () => { const v = parseClock(tf.input.value); if (v) { tf.input.value = ""; add(v); } else if (tf.input.value) tf.input.dispatchEvent(new Event("blur")); } }, icon("plus"))));
     };
     draw();
     return field("Időpont(ok)", box);
@@ -908,8 +988,10 @@ async function openEditor(item) {
         g.append(field("Napok", h("select", { class: "input", onchange: e => { sp.days = e.target.value; renderSchedule(); onChange(); } },
           [["", "minden nap"], ["weekdays", "hétköznap (H–P)"], ["workdays", "munkanapokon (ünnepekkel)"], ["custom", "kiválasztott napokon"]]
             .map(([v, l]) => h("option", { value: v, selected: (sp.days || "") === v }, l)))));
-        g.append(field("Első időpont (kezdés)", h("input", { class: "input", type: "time", value: sp.from || "00:00", oninput: e => { sp.from = e.target.value; onChange(); } }), "pl. 06:00, vagy 00:15 = minden óra 15. percében"));
-        g.append(field("Utolsó időpont (vége)", h("input", { class: "input", type: "time", value: sp.to || "23:59", oninput: e => { sp.to = e.target.value; onChange(); } }), "ha korábbi a kezdésnél, átnyúlik éjfélen"));
+        if (!sp.from) sp.from = "00:00";
+        if (!sp.to) sp.to = "23:59";
+        g.append(h("div", { class: "field" }, "Első időpont (kezdés)", timeField(sp.from, v => { sp.from = v; onChange(); }), h("span", { class: "hint" }, "pl. 06:00, vagy 00:15 = minden óra 15. percében")));
+        g.append(h("div", { class: "field" }, "Utolsó időpont (vége)", timeField(sp.to, v => { sp.to = v; onChange(); }), h("span", { class: "hint" }, "ha korábbi a kezdésnél, átnyúlik éjfélen")));
         if (sp.days === "custom") schedBox.append(h("div", { style: { marginTop: "12px" } }, field("Kiválasztott napok", dayPicker())));
         break;
       }
@@ -1475,7 +1557,7 @@ views.settings = main => {
 
   const sw = (obj, key) => h("label", { class: "switch" }, h("input", { type: "checkbox", checked: !!obj[key], onchange: e => { obj[key] = e.target.checked; } }));
   const num = (obj, key, min, max) => h("input", { class: "input narrow", type: "number", min, max, value: obj[key], oninput: e => { obj[key] = parseInt(e.target.value, 10) || 0; } });
-  const timeIn = (obj, key) => h("input", { class: "input narrow", type: "time", value: obj[key], oninput: e => { obj[key] = e.target.value; } });
+  const timeIn = (obj, key) => timeField(obj[key], v => { obj[key] = v; });
   const row = (title, hint, ctrl) => h("div", { class: "setting-row" }, h("div", { class: "lbl" }, h("b", {}, title), hint ? h("span", {}, hint) : null), ctrl);
 
   grid.append(h("div", { class: "card" },
