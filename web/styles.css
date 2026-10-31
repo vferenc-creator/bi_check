@@ -215,6 +215,7 @@ textarea.input { height: auto; min-height: 64px; padding: 8px 10px; resize: vert
 .st-suspicious { --c: var(--suspicious); }
 .st-waiting { --c: var(--waiting); }
 .st-disabled, .st-unknown { --c: var(--disabled); }
+.st-skipped { --c: var(--skipped); }
 .dot.st { background: var(--c); }
 
 /* ---------- item table ---------- */

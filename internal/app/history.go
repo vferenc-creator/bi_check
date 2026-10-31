@@ -149,6 +149,7 @@ type Stats struct {
 	OnTime      int     `json:"onTime"`
 	Late        int     `json:"late"`
 	Missed      int     `json:"missed"`
+	Skipped     int     `json:"skipped"`     // optional item: did not arrive, not counted as missed
 	Unknown     int     `json:"unknown"`     // monitor was not running
 	Punctuality float64 `json:"punctuality"` // % on time of measured
 	AvgDelaySec int64   `json:"avgDelaySec"`
@@ -254,6 +255,9 @@ func (a *App) itemHistory(id string, days int) (HistoryView, error) {
 			}
 		} else if now.Before(t.Add(grace)) {
 			c.Status = "pending"
+		} else if covered(periods, t.Add(grace)) && it.Optional {
+			c.Status = "skipped"
+			st.Skipped++
 		} else if covered(periods, t.Add(grace)) {
 			c.Status = "missed"
 			st.Missed++

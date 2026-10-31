@@ -31,7 +31,7 @@ type ExportFile struct {
 
 var csvHeader = []string{"id", "nev", "csoport", "felelos", "megjegyzes", "utvonal", "datum_token", "utemezes_leiras",
 	"utemezes_json", "turelmi_ido_perc", "korai_perc", "bekapcsolva", "ertesites", "nulla_bajt_gyanus", "min_meret_bajt", "meretcsokkenes_szazalek",
-	"hiany_engedelyezve", "hiany_tol", "hiany_ig", "tipus", "email_targy", "email_mappa", "email_partner"}
+	"hiany_engedelyezve", "hiany_tol", "hiany_ig", "tipus", "email_targy", "email_mappa", "email_partner", "nem_kotelezo"}
 
 func kindStr(k string) string {
 	if k == model.KindEmail {
@@ -68,7 +68,7 @@ func EncodeCSV(items []model.Item) []byte {
 		_ = w.Write([]string{it.ID, it.Name, it.Group, it.Owner, it.Note, it.Path, string(it.Token), it.Schedule.Describe(), string(sj),
 			strconv.Itoa(it.GraceMinutes), strconv.Itoa(it.EarlyMinutes), boolStr(it.Enabled), boolStr(it.Notify),
 			boolStr(it.Suspicious.ZeroBytes), strconv.FormatInt(it.Suspicious.MinBytes, 10), strconv.Itoa(it.Suspicious.DropPercent),
-			boolStr(it.Gap.Enabled), it.Gap.From, it.Gap.To, kindStr(it.Kind), it.Mail.Subject, it.Mail.Folder, it.Mail.Party})
+			boolStr(it.Gap.Enabled), it.Gap.From, it.Gap.To, kindStr(it.Kind), it.Mail.Subject, it.Mail.Folder, it.Mail.Party, boolStr(it.Optional)})
 	}
 	w.Flush()
 	return buf.Bytes()
@@ -163,6 +163,7 @@ func DecodeItems(data []byte) ([]model.Item, error) {
 			it.Suspicious.DropPercent, _ = strconv.Atoi(v)
 		}
 		it.Gap = model.GapWindow{Enabled: parseBool(get(row, "hiany_engedelyezve")), From: get(row, "hiany_tol"), To: get(row, "hiany_ig")}
+		it.Optional = parseBool(get(row, "nem_kotelezo"))
 		if t := strings.ToLower(get(row, "tipus")); t == "e-mail" || t == "email" {
 			it.Kind = model.KindEmail
 			it.Mail = model.MailRule{Subject: get(row, "email_targy"), Folder: get(row, "email_mappa"), Party: get(row, "email_partner")}

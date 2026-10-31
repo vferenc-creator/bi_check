@@ -391,7 +391,7 @@ func (a *App) registerItemAPI() {
 			res = a.Checker.Check(it.Path, ref.In(a.Loc), it.Token == model.TokenAny)
 		}
 		out := status.Evaluate(status.Input{Now: time.Now(), Expected: exp, HasExpected: has, PrevExpected: prev,
-			Grace: it.Grace(), Early: it.Early(), Result: res, Rules: rules, Gap: it.Gap, Loc: a.Loc})
+			Grace: it.Grace(), Early: it.Early(), Result: res, Rules: rules, Gap: it.Gap, Optional: it.Optional, Loc: a.Loc})
 		tr := TestResult{Status: out.Status, Reason: out.Reason, Result: res, Warnings: warn, NormPath: it.Path}
 		if has {
 			tr.Expected = &exp

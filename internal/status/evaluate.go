@@ -26,6 +26,8 @@ type Input struct {
 	Rules        model.SuspiciousRules
 	// Gap: daily window in which a missing/old file is not a problem.
 	Gap model.GapWindow
+	// Optional: not arriving is "skipped" (Nincs új), never late / missing.
+	Optional bool
 	// RecentSizes are sizes of previous arrivals (newest first).
 	RecentSizes []int64
 	Loc         *time.Location
@@ -130,6 +132,16 @@ func Evaluate(in Input) Output {
 	if in.Gap.Contains(in.Now.In(loc)) {
 		out.Status, out.Gap = model.StatusWaiting, true
 		out.Reason = fmt.Sprintf("Üres ablak (%s): ilyenkor a fájl hiányozhat, %s után újra figyelem. %s", in.Gap.Describe(), in.Gap.To, what)
+		return out
+	}
+	if in.Optional {
+		if in.Now.Before(out.Deadline) {
+			out.Status = model.StatusWaiting
+			out.Reason = fmt.Sprintf("Nem kötelező. Elvárt: %s, türelmi idő %s-ig. %s", hm(in.Expected), hm(out.Deadline), what)
+			return out
+		}
+		out.Status = model.StatusSkipped
+		out.Reason = fmt.Sprintf("Nincs új (elvárt: %s) – ez a riport nem kötelező, ezért nem hiba. %s", hm(in.Expected), what)
 		return out
 	}
 	if in.Now.Before(out.Deadline) {

@@ -24,6 +24,9 @@ const (
 	StatusUnreachable Status = "unreachable" // network / permission problem
 	StatusSuspicious  Status = "suspicious"  // arrived, but looks wrong (0 bytes, too small…)
 	StatusDisabled    Status = "disabled"    // switched off by the user
+	// StatusSkipped: an optional item did not arrive this time ("Nincs új") –
+	// shown, but not a problem (no alert, the tray stays calm).
+	StatusSkipped Status = "skipped"
 )
 
 // GroupMuted reports whether the user muted a group.
@@ -49,7 +52,7 @@ const (
 // Severity of the status.
 func (s Status) Severity() Severity {
 	switch s {
-	case StatusOK, StatusWaiting:
+	case StatusOK, StatusWaiting, StatusSkipped:
 		return SevOK
 	case StatusLate, StatusSuspicious:
 		return SevWarning
@@ -76,6 +79,8 @@ func (s Status) Label() string {
 		return "Gyanús"
 	case StatusDisabled:
 		return "Kikapcsolva"
+	case StatusSkipped:
+		return "Nincs új"
 	}
 	return "Ismeretlen"
 }
@@ -197,6 +202,10 @@ type Item struct {
 
 	Enabled bool `json:"enabled"`
 	Notify  bool `json:"notify"`
+	// Optional: the output does not have to arrive every time (e.g. no new
+	// item master today). Not arriving is shown as "Nincs új", not as late /
+	// missing, and does not alert.
+	Optional bool `json:"optional,omitempty"`
 
 	// Kind: "" = a file / file name pattern / folder (Path), "email" = an
 	// e-mail seen by the Thunderbird add-on (Mail).

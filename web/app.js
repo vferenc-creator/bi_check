@@ -205,9 +205,9 @@ function fail(e) { console.error(e); toast(e && e.message ? e.message : String(e
 // ---------------------------------------------------------------------------
 const STATUS = {
   ok: "OK", waiting: "Várakozik", late: "Késik", missing: "Hiányzik",
-  unreachable: "Elérhetetlen", suspicious: "Gyanús", disabled: "Kikapcsolva", unknown: "Ismeretlen",
+  unreachable: "Elérhetetlen", suspicious: "Gyanús", disabled: "Kikapcsolva", unknown: "Ismeretlen", skipped: "Nincs új",
 };
-const STATUS_ORDER = ["missing", "unreachable", "suspicious", "late", "unknown", "waiting", "ok", "disabled"];
+const STATUS_ORDER = ["missing", "unreachable", "suspicious", "late", "unknown", "waiting", "skipped", "ok", "disabled"];
 function pill(status, text) {
   return h("span", { class: "pill st-" + status }, h("span", { class: "dot" }), text || STATUS[status] || status);
 }
@@ -365,7 +365,7 @@ function renderSummary() {
   const box = clear($("#summary"));
   const counts = {};
   for (const r of S.items) { const st = r.state ? r.state.status : "unknown"; counts[st] = (counts[st] || 0) + 1; }
-  for (const st of ["ok", "late", "missing", "unreachable", "suspicious"]) {
+  for (const st of ["ok", "skipped", "late", "missing", "unreachable", "suspicious"]) {
     const n = counts[st] || 0;
     if (!n && st !== "ok") continue;
     box.append(h("span", {
@@ -505,6 +505,7 @@ function itemRow(r, cols) {
       h("div", { class: "meta" },
         it.group ? h("span", { class: "group-tag" }, it.group) : null,
         it.owner ? h("span", { class: "owner" }, it.owner) : null,
+        it.optional ? h("span", { class: "shared-tag", title: "Nem kötelező: ha nem érkezik meg, csak „Nincs új” jelzés" }, "nem kötelező") : null,
         it.source ? h("span", { class: "shared-tag", title: "Közös listából: " + it.source }, "közös") : null,
         !it.notify || ((S.settings && S.settings.overrides || {})[it.id] || {}).mute || (r.team && r.team.muted) ? h("span", { title: "Nem kér értesítést erről az elemről" }, icon("bellOff", "mute-ic")) : null,
         r.team && r.team.recent ? h("span", { class: "new-tag", title: r.team.recent.by + " – " + fmtDateTime(r.team.recent.at) }, { added: "új", modified: "módosítva", restored: "visszaállítva" }[r.team.recent.kind] || "változott") : null),
@@ -674,6 +675,7 @@ function renderDrawer() {
   }
   add("Ütemezés", st.scheduleText);
   add("Üres ablak", it.gap && it.gap.enabled ? "naponta " + it.gap.from + "–" + it.gap.to : null);
+  add("Nem kötelező", it.optional ? "igen – ha nem érkezik meg, csak „Nincs új” jelzés (nem hiba)" : null);
   if (st.scheduleError) add("Ütemezési hiba", st.scheduleError);
   add("Elvárt időpont", parseT(st.expected) ? fmtDateTime(st.expected) : null);
   add("Határidő", parseT(st.deadline) ? fmtDateTime(st.deadline) + " (türelmi idő: " + it.graceMinutes + " perc)" : null);
@@ -1319,7 +1321,10 @@ async function openEditor(item, draft) {
             field("Minimális méret (KB)", h("input", { class: "input narrow", type: "number", min: 0, value: minKB.v, oninput: e => { sus.minBytes = (parseInt(e.target.value, 10) || 0) * 1024; } })),
             field("Méretcsökkenés (%)", number(sus, "dropPercent", { min: 0, max: 99 }), "a szokásos mérethez képest; 0 = ki"))),
         h("fieldset", {}, h("legend", {}, "Működés"),
-          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", team ? "Értesítés nekem (személyes beállítás)" : "Értesítés erről az elemről"))),
+          h("div", { class: "row wrap", style: { gap: "24px" } }, sw(it, "enabled", "Figyelés bekapcsolva"), sw(it, "notify", team ? "Értesítés nekem (személyes beállítás)" : "Értesítés erről az elemről")),
+          h("div", { style: { marginTop: "12px" } }, sw(it, "optional", "Nem kötelező"),
+            h("div", { class: "small muted", style: { margin: "4px 0 0 46px", lineHeight: 1.45 } },
+              "Nem baj, ha néha nem érkezik meg (pl. nincs új cikktörzs). Ilyenkor nem „Késik” / „Hiányzik” lesz, hanem csak egy „Nincs új” jelzés – értesítés és piros tálcaikon nélkül."))),
         errBox,
       ),
       h("div", { class: "side" }, preview,
@@ -1360,6 +1365,7 @@ async function openEditor(item, draft) {
       case "türelmi idő": return x.graceMinutes + " perc"; case "korai tolerancia": return x.earlyMinutes + " perc";
       case "figyelés be/ki": return x.enabled ? "bekapcsolva" : "kikapcsolva";
       case "e-mail figyelés": return x.kind === "email" ? "tárgy: " + (x.mail.subject || "") + (x.mail.folder ? ", mappa: " + x.mail.folder : "") + (x.mail.party ? ", partner: " + x.mail.party : "") : "nincs (fájl)";
+      case "nem kötelező": return x.optional ? "igen" : "nem";
       case "megengedett hiány": return x.gap && x.gap.enabled ? "naponta " + x.gap.from + "–" + x.gap.to : "nincs";
       case "gyanússági szabályok": return (x.suspicious.zeroBytes ? "0 bájt gyanús, " : "") + "min. " + Math.round((x.suspicious.minBytes || 0) / 1024) + " KB, csökkenés " + (x.suspicious.dropPercent || 0) + "%";
       case "ütemezés": return JSON.stringify(x.schedule);
@@ -1435,8 +1441,8 @@ function renderHistory(body, it, st) {
   }
 }
 
-const CELL_C = { ok: "var(--ok)", late: "var(--late)", missed: "var(--missing)", pending: "var(--waiting)", unknown: "var(--disabled)" };
-const CELL_T = { ok: "időben", late: "késve", missed: "kimaradt", pending: "folyamatban", unknown: "nem mért (a program nem futott)" };
+const CELL_C = { ok: "var(--ok)", late: "var(--late)", missed: "var(--missing)", skipped: "var(--skipped)", pending: "var(--waiting)", unknown: "var(--disabled)" };
+const CELL_T = { ok: "időben", late: "késve", missed: "kimaradt", skipped: "nem jött új (nem kötelező)", pending: "folyamatban", unknown: "nem mért (a program nem futott)" };
 
 function drawHistory(box, d, it) {
   const s = d.stats;
@@ -1446,7 +1452,9 @@ function drawHistory(box, d, it) {
     h("div", { class: "stat" }, h("b", {}, measured ? Math.round(s.punctuality) + "%" : "–"), h("span", {}, "pontosság")),
     h("div", { class: "stat" }, h("b", {}, s.onTime + s.late ? fmtDur(s.avgDelaySec) : "–"), h("span", {}, "átlagos késés")),
     h("div", { class: "stat" }, h("b", {}, s.onTime + s.late ? fmtDur(s.maxDelaySec) : "–"), h("span", {}, "max. késés")),
-    h("div", { class: "stat" }, h("b", { style: { color: s.missed ? "var(--missing)" : "" } }, s.missed), h("span", {}, "kimaradt / " + (s.expected || 0)))));
+    it.optional
+      ? h("div", { class: "stat" }, h("b", {}, s.skipped || 0), h("span", {}, "nem jött új / " + (s.expected || 0)))
+      : h("div", { class: "stat" }, h("b", { style: { color: s.missed ? "var(--missing)" : "" } }, s.missed), h("span", {}, "kimaradt / " + (s.expected || 0)))));
   if (d.timeline.length) {
     box.append(h("div", { class: "section-t" }, "Idővonal (utolsó " + d.timeline.length + " elvárt lerakás)"));
     const tl = h("div", { class: "timeline" });
@@ -1457,7 +1465,7 @@ function drawHistory(box, d, it) {
     }
     box.append(tl);
     box.append(h("div", { class: "row small muted", style: { marginTop: "6px", gap: "12px", flexWrap: "wrap" } },
-      Object.entries({ ok: "időben", late: "késve", missed: "kimaradt", unknown: "nem mért" }).map(([k, l]) =>
+      Object.entries(it.optional ? { ok: "időben", late: "késve", skipped: "nem jött új", unknown: "nem mért" } : { ok: "időben", late: "késve", missed: "kimaradt", unknown: "nem mért" }).map(([k, l]) =>
         h("span", { class: "row", style: { gap: "4px" } }, h("span", { style: { width: "10px", height: "10px", borderRadius: "2px", background: CELL_C[k] } }), l))));
   }
   if (d.sizes.length > 1 && it.kind !== "email") {

@@ -160,10 +160,11 @@ type checkRelevant struct {
 	Enabled  bool
 	Kind     string
 	Mail     model.MailRule
+	Optional bool
 }
 
 func relevant(it model.Item) checkRelevant {
-	return checkRelevant{it.Path, it.Token, it.Schedule, it.GraceMinutes, it.EarlyMinutes, it.Suspicious, it.Gap, it.Enabled, it.Kind, it.Mail}
+	return checkRelevant{it.Path, it.Token, it.Schedule, it.GraceMinutes, it.EarlyMinutes, it.Suspicious, it.Gap, it.Enabled, it.Kind, it.Mail, it.Optional}
 }
 
 // Configure replaces the item list and timing settings. States of unchanged
@@ -421,7 +422,7 @@ func (e *Engine) checkOne(en *entry) {
 	}
 	out := status.Evaluate(status.Input{
 		Now: e.cfg.Now(), Expected: exp, HasExpected: hasExp, PrevExpected: prev,
-		Grace: item.Grace(), Early: item.Early(), Result: res, Rules: rules, Gap: item.Gap,
+		Grace: item.Grace(), Early: item.Early(), Result: res, Rules: rules, Gap: item.Gap, Optional: item.Optional,
 		RecentSizes: sizes, Loc: e.cfg.Loc,
 	})
 
@@ -519,7 +520,7 @@ func (e *Engine) Servers() []checker.ServerStatus { return e.cfg.Checker.Servers
 func SortStates(states []ItemState, name func(id string) string) {
 	rank := map[model.Status]int{
 		model.StatusMissing: 0, model.StatusUnreachable: 1, model.StatusSuspicious: 2, model.StatusLate: 3,
-		model.StatusUnknown: 4, model.StatusWaiting: 5, model.StatusOK: 6, model.StatusDisabled: 7,
+		model.StatusUnknown: 4, model.StatusWaiting: 5, model.StatusSkipped: 6, model.StatusOK: 7, model.StatusDisabled: 8,
 	}
 	sort.SliceStable(states, func(i, j int) bool {
 		ri, rj := rank[states[i].Status], rank[states[j].Status]

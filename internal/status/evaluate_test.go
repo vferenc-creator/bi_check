@@ -230,3 +230,29 @@ func TestGapWindow(t *testing.T) {
 		t.Error("invalid windows accepted")
 	}
 }
+
+// Optional items: not arriving is "Nincs új" (skipped), never late / missing.
+func TestOptionalItem(t *testing.T) {
+	run := func(now string, r checker.Result) Output {
+		s, _ := schedule.Compile(daily6, calendar.Default, bud)
+		n := at(now)
+		exp, ok := s.Prev(n)
+		prev, _ := s.PrevBefore(exp)
+		return Evaluate(Input{Now: n, Expected: exp, HasExpected: ok, PrevExpected: prev, Grace: 30 * time.Minute,
+			Result: r, Optional: true, Loc: bud})
+	}
+	missing := checker.Result{Kind: checker.NotFound, Reason: "A fájl nem található."}
+	if o := run("2026-10-08 06:10", missing); o.Status != model.StatusWaiting {
+		t.Errorf("within grace: %s", o.Status)
+	}
+	o := run("2026-10-08 07:00", missing)
+	if o.Status != model.StatusSkipped || o.Status.Severity() != model.SevOK || !strings.Contains(o.Reason, "nem kötelező") {
+		t.Errorf("after the deadline: %s (%s)", o.Status, o.Reason)
+	}
+	if o := run("2026-10-08 07:00", found("2026-10-08 06:40", 100)); o.Status != model.StatusOK {
+		t.Errorf("arrived: %s", o.Status)
+	}
+	if o := run("2026-10-08 07:00", checker.Result{Kind: checker.Unreachable, Reason: "x"}); o.Status != model.StatusUnreachable {
+		t.Errorf("network errors are still reported: %s", o.Status)
+	}
+}
