@@ -177,7 +177,7 @@ func seedHistory(a *app.App) {
 	up := a.History.StartUptime(from)
 	up.Beat(now)
 	rnd := rand.New(rand.NewSource(42))
-	for _, it := range a.Settings.Get().Items {
+	for n, it := range a.Settings.Get().Items {
 		sc, err := schedule.Compile(it.Schedule, a.Calendar(), a.Loc)
 		if err != nil {
 			continue
@@ -189,12 +189,15 @@ func seedHistory(a *app.App) {
 		base := size
 		for _, t := range sc.Between(from, now.Add(-time.Hour), 2000) {
 			r := rnd.Float64()
-			if r < 0.04 {
+			if r < 0.04 && n != 0 {
 				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(it.Grace()), From: "late", To: "missing", Reason: "Nem érkezett meg időben.", Expected: &t})
 				continue
 			}
 			delay := time.Duration(rnd.Intn(8)) * time.Minute
-			if r > 0.9 {
+			if n == 0 {
+				// the first item drifts: a little later every day (Csúszásfigyelés demo)
+				delay = time.Duration(float64(time.Minute) * (3 + t.Sub(from).Hours()/24*1.1 + rnd.Float64()*6))
+			} else if r > 0.9 {
 				delay = it.Grace() + time.Duration(5+rnd.Intn(60))*time.Minute
 				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(it.Grace()), From: "late", To: "missing", Reason: "Nem érkezett meg (határidő lejárt).", Expected: &t})
 				_ = a.History.RecordTransition(store.Transition{ItemID: it.ID, At: t.Add(delay), From: "missing", To: "ok", Reason: "Megérkezett késéssel.", Expected: &t})

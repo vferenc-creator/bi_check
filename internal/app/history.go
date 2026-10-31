@@ -115,6 +115,9 @@ func (a *App) background(stop <-chan struct{}) {
 			if a.refreshShared(false) {
 				a.reconfigure()
 			}
+			if a.refreshDrift(now, false) {
+				a.schedulePush()
+			}
 			if a.History != nil && now.Sub(lastPrune) > 6*time.Hour {
 				lastPrune = now
 				_ = a.History.Prune(now.AddDate(0, 0, -s.HistoryDays), itemIDs(a.effectiveItems(s)))

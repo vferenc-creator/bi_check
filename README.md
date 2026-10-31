@@ -208,6 +208,19 @@ A részletpanelen elemenként az utolsó 30 napra:
 
 A „nem mért” azt jelenti, hogy a program akkor nem futott (például ki volt kapcsolva a gép). Ezek nem számítanak kimaradásnak.
 
+### Csúszásfigyelés
+
+A program az előzményekből megtanulja, mikor szokott megérkezni egy riport, és **finoman jelzi, ha hétről hétre egyre később jön** – még mielőtt késés lenne belőle. Ilyenkor a listában a név alatt egy halvány, szaggatott keretes **„csúszik ↗”** címke jelenik meg, a részletpanelen pedig egy rövid magyarázat és egy kis grafikon az érkezési időkről (szaggatott vonal: a türelmi idő vége), például:
+
+> 4 hete egyre később érkezik: 06:05 → 06:40 (hetente kb. 9 perccel később). A türelmi idő 06:45-ig tart, már nincs sok tartalék.
+
+- **Csak jelzés:** nem változtat az állapoton, nem küld értesítést, és a tálcaikon sem változik.
+- **Csak valódi tendenciánál szól:** legalább két hét és 8 érkezés adata kell (az utolsó 6 hétből), a mostani tipikus érkezés legalább ~15 perccel későbbi, mint az elején, és hetente legalább ~3 perccel csúszik. Egy-két kiugróan késő nap nem okoz jelzést (medián és robusztus meredekség).
+- Ha egy riport korábban jön a vártnál, de egyre kevésbé (pl. 60 → 30 perccel előtte), az nem csúszás.
+- Ha az ütemezés időpontját módosítod, a régi időpontokhoz tartozó érkezések nem számítanak bele.
+- Óránkénti vagy többidőpontos ütemezésnél az elmozdulást a várt időponthoz képest mutatja (pl. „5 perccel utána → 30 perccel utána”). Üres ablakos elemeknél nincs csúszásfigyelés.
+- A számítás félóránként frissül, a helyi előzményekből (közös módban minden gép a sajátjából).
+
 Az **Eseménynapló** (bal oldali menü) az összes elem állapotváltozását mutatja az elmúlt 7 napra. Az előzmények megőrzési ideje a Beállításokban állítható (alapból 180 nap).
 
 ---
@@ -402,6 +415,7 @@ internal/calendar/   magyar munkanaptár (ünnepek, húsvét, áthelyezések)
 internal/pathpattern/ minták és dátum tokenek
 internal/checker/    fájlellenőrzés: timeout, szerverenkénti sorban állás, újrapróbálás, circuit breaker, hibaosztályozás
 internal/status/     állapot-kiértékelés (OK/Késik/Hiányzik/Elérhetetlen/Gyanús, üres ablak)
+internal/drift/      csúszásfigyelés: érkezési idők tendenciája (medián, Theil–Sen) – unit tesztekkel
 internal/engine/     háttérütemező: mikor mit kell ellenőrizni, „Elérhetetlen” megerősítése
 internal/notify/     értesítési szabályok (ismétlésgátlás, csendes időszak, összevonás)
 internal/store/      settings.json + history.db

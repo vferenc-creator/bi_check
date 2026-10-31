@@ -506,6 +506,7 @@ function itemRow(r, cols) {
         it.group ? h("span", { class: "group-tag" }, it.group) : null,
         it.owner ? h("span", { class: "owner" }, it.owner) : null,
         it.optional ? h("span", { class: "shared-tag", title: "Nem kötelező: ha nem érkezik meg, csak „Nincs új” jelzés" }, "nem kötelező") : null,
+        r.drift ? h("span", { class: "drift-tag", title: "Csúszásfigyelés: " + r.drift.text + "\n(Csak jelzés – nem késés, nem küld értesítést.)" }, "csúszik ↗") : null,
         it.source ? h("span", { class: "shared-tag", title: "Közös listából: " + it.source }, "közös") : null,
         !it.notify || ((S.settings && S.settings.overrides || {})[it.id] || {}).mute || (r.team && r.team.muted) ? h("span", { title: "Nem kér értesítést erről az elemről" }, icon("bellOff", "mute-ic")) : null,
         r.team && r.team.recent ? h("span", { class: "new-tag", title: r.team.recent.by + " – " + fmtDateTime(r.team.recent.at) }, { added: "új", modified: "módosítva", restored: "visszaállítva" }[r.team.recent.kind] || "változott") : null),
@@ -692,6 +693,7 @@ function renderDrawer() {
   if (it.source) add("Forrás", "Közös lista: " + it.source);
   add("Megjegyzés", it.note);
   body.append(kv);
+  if (r.drift) body.append(driftBox(r.drift, it));
   if (mail && st.candidates && st.candidates.length) {
     body.append(h("div", { class: "section-t" }, "Legutóbbi illeszkedő e-mailek"));
     const ev = h("div", { class: "events" });
@@ -1496,6 +1498,42 @@ function sparkline(vals) {
     pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="2.2" fill="var(--accent)"/>`).join("");
   const wrap = h("div", {}, svg, h("div", { class: "row small muted" }, h("span", {}, "min " + fmtSize(min)), h("span", { class: "grow" }), h("span", {}, "max " + fmtSize(max))));
   return wrap;
+}
+
+// Csúszásfigyelés: a gentle hint, not a status – arrival delays of the last
+// weeks with the trend and the end of the grace period.
+function driftBox(d, it) {
+  return h("div", { class: "drift-box" },
+    h("div", { class: "drift-t" }, "↗ Csúszásfigyelés"),
+    h("div", { class: "small" }, d.text),
+    driftChart(d, it.graceMinutes || 0),
+    h("div", { class: "small muted" }, "Csak jelzés: amíg a türelmi időn belül érkezik, nem számít késésnek és nem küld értesítést."));
+}
+
+const shortDate = s => { const d = parseT(s); return d ? pad(d.getMonth() + 1) + "." + pad(d.getDate()) + "." : ""; };
+
+function driftChart(d, grace) {
+  const pts = d.points || [];
+  if (pts.length < 2) return "";
+  const W = 480, H = 74, P = 6;
+  const t0 = new Date(pts[0].expected).getTime(), t1 = new Date(pts[pts.length - 1].expected).getTime();
+  const vals = pts.map(p => p.delayMin);
+  let lo = Math.min(0, ...vals), hi = Math.max(...vals, grace > 0 ? grace : 0, 1);
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const x = t => P + (t - t0) / Math.max(1, t1 - t0) * (W - 2 * P);
+  const y = v => H - P - (v - lo) / (hi - lo) * (H - 2 * P);
+  let s = `<line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="var(--border)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  if (grace > 0) s += `<line x1="0" x2="${W}" y1="${y(grace)}" y2="${y(grace)}" stroke="var(--late)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" opacity=".7"/>`;
+  s += pts.map(p => `<circle cx="${x(new Date(p.expected).getTime())}" cy="${y(p.delayMin)}" r="2.4" fill="var(--muted)" opacity=".75"/>`).join("");
+  s += `<line x1="${x(t0)}" x2="${x(t1)}" y1="${y(d.fromMin)}" y2="${y(d.toMin)}" stroke="var(--late)" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("class", "spark drift-chart");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = s;
+  return h("div", {}, svg, h("div", { class: "row small muted" },
+    h("span", {}, shortDate(pts[0].expected)), h("span", { class: "grow", style: { textAlign: "center" } },
+      grace > 0 ? "szaggatott vonal: türelmi idő vége" : ""), h("span", {}, shortDate(pts[pts.length - 1].expected))));
 }
 
 // ---- Event log ---------------------------------------------------------

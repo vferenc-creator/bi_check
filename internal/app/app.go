@@ -62,6 +62,8 @@ type App struct {
 	Mail *mailwatch.Hub
 	tb   tbState
 
+	drift driftCache // gentle "comes later and later" hints
+
 	// OnCall, if set, is invoked before every RPC (used by --selftest).
 	OnCall func(method string)
 }

@@ -23,7 +23,8 @@ import (
 type ItemView struct {
 	Item  model.Item       `json:"item"`
 	State engine.ItemState `json:"state"`
-	Team  *TeamItemInfo    `json:"team,omitempty"` // shared mode only
+	Team  *TeamItemInfo    `json:"team,omitempty"`  // shared mode only
+	Drift *DriftInfo       `json:"drift,omitempty"` // arrives later and later (hint only)
 }
 
 // Snapshot is what the UI renders.
@@ -55,7 +56,7 @@ func (a *App) snapshot() Snapshot {
 		if !ok {
 			st = engine.ItemState{ID: it.ID, Status: model.StatusUnknown, ScheduleText: it.Schedule.Describe()}
 		}
-		v := ItemView{Item: it, State: st}
+		v := ItemView{Item: it, State: st, Drift: a.driftFor(it.ID)}
 		if ts != nil && tst != nil {
 			v.Team = a.teamInfo(s, ts, tst, it.ID, locks)
 		}
@@ -76,7 +77,7 @@ func (a *App) findItem(id string) (model.Item, bool) {
 func (a *App) view(id string) ItemView {
 	it, _ := a.findItem(id)
 	st, _ := a.Engine.State(id)
-	v := ItemView{Item: it, State: st}
+	v := ItemView{Item: it, State: st, Drift: a.driftFor(id)}
 	if ts, tst := a.teamStore(), a.teamState(); ts != nil && tst != nil {
 		v.Team = a.teamInfo(a.Settings.Get(), ts, tst, id, ts.Locks())
 	}
