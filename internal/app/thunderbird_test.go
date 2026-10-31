@@ -213,7 +213,7 @@ func TestThunderbirdOneClickInstall(t *testing.T) {
 		t.Fatalf("built-in config: %+v", cfg)
 	}
 	// Thunderbird running → the message says to restart it.
-	os.Symlink("x", filepath.Join(root, "Profiles", "abcd.work", "lock"))
+	holdProfileLock(t, filepath.Join(root, "Profiles", "abcd.work"))
 	if r := call[TBInstallResult](t, a, "tbInstall", nil); !r.Running || !strings.Contains(r.Message, "indítsa újra") {
 		t.Fatalf("running: %+v", r)
 	}
