@@ -80,6 +80,8 @@ type Options struct {
 	LocalDir string
 	// Identity of the user/PC for the shared mode (defaults from env).
 	Identity teamstore.Identity
+	// ThunderbirdRoot overrides where Thunderbird profiles are looked for (tests).
+	ThunderbirdRoot string
 }
 
 // New loads the settings and prepares the app (call Start to begin monitoring).
@@ -154,6 +156,7 @@ func (a *App) Start() {
 		}
 	}()
 	a.syncThunderbird()
+	go a.refreshInstalledXPI(false) // keep the add-on in step with the application
 	go a.Engine.Run(ctx)
 	go a.background(a.stop)
 	if s := a.Settings.Get(); s.Team.Enabled && s.Team.Folder != "" {

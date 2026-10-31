@@ -86,15 +86,17 @@ func main() {
 	seed := flag.Bool("seed", false, "fill the history with 30 days of fake events (demo)")
 	user := flag.String("user", "", "simulated user name for the shared mode (e.g. \"Kiss Anna\")")
 	host := flag.String("host", "", "simulated computer name")
+	tbRoot := flag.String("tbroot", "", "folder with profiles.ini instead of the real Thunderbird profiles")
 	flag.Parse()
 	_ = os.MkdirAll(*data, 0o755)
 
 	p := &devPlatform{subs: map[chan []byte]bool{}}
 	a, err := app.New(p, app.Options{
-		SettingsPath: filepath.Join(*data, "settings.json"),
-		HistoryPath:  filepath.Join(*data, "history.db"),
-		LocalDir:     filepath.Join(*data, "local"),
-		Identity:     teamstore.Identity{User: *user, Display: *user, Host: *host},
+		SettingsPath:    filepath.Join(*data, "settings.json"),
+		HistoryPath:     filepath.Join(*data, "history.db"),
+		LocalDir:        filepath.Join(*data, "local"),
+		Identity:        teamstore.Identity{User: *user, Display: *user, Host: *host},
+		ThunderbirdRoot: *tbRoot,
 	})
 	if err != nil {
 		log.Fatal(err)

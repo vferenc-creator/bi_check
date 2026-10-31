@@ -74,7 +74,10 @@ func (a *App) syncThunderbird() {
 	s := a.Settings.Get()
 	tb := s.Thunderbird
 	if tb.Enabled && tb.Key == "" {
-		s2, err := a.Settings.Update(func(s *model.Settings) error { s.Thunderbird.Key = newKey(); return nil })
+		s2, err := a.Settings.Update(func(s *model.Settings) error {
+			s.Thunderbird.Key, s.Thunderbird.KeyIssued = newKey(), time.Now().UTC().Format(time.RFC3339Nano)
+			return nil
+		})
 		if err == nil {
 			tb = s2.Thunderbird
 		}
@@ -292,6 +295,9 @@ type TBStatus struct {
 	Error     string         `json:"error,omitempty"`
 	Info      mailwatch.Info `json:"info"`
 	Rules     int            `json:"rules"`
+	Profiles  []TBProfile    `json:"profiles"`
+	// ProfileError: no Thunderbird profile found (one-click install impossible).
+	ProfileError string `json:"profileError,omitempty"`
 }
 
 func (a *App) tbStatus() TBStatus {
@@ -302,11 +308,20 @@ func (a *App) tbStatus() TBStatus {
 	a.tb.mu.Unlock()
 	st.Info = a.Mail.Info()
 	st.Rules = len(mailwatch.Rules(a.effectiveItems(s)))
+	if p, err := a.tbProfiles(); err != nil {
+		st.ProfileError = err.Error()
+	} else {
+		st.Profiles = p
+	}
+	if st.Profiles == nil {
+		st.Profiles = []TBProfile{}
+	}
 	return st
 }
 
 func (a *App) registerThunderbirdAPI() {
 	a.register("tbStatus", func() (TBStatus, error) { return a.tbStatus(), nil })
+	a.register("tbInstall", func() (TBInstallResult, error) { return a.installThunderbird() })
 
 	type tbSave struct {
 		Enabled  bool `json:"enabled"`
@@ -332,10 +347,14 @@ func (a *App) registerThunderbirdAPI() {
 		return a.tbStatus(), nil
 	})
 	a.register("tbNewKey", func() (TBStatus, error) {
-		if _, err := a.Settings.Update(func(s *model.Settings) error { s.Thunderbird.Key = newKey(); return nil }); err != nil {
+		if _, err := a.Settings.Update(func(s *model.Settings) error {
+			s.Thunderbird.Key, s.Thunderbird.KeyIssued = newKey(), time.Now().UTC().Format(time.RFC3339Nano)
+			return nil
+		}); err != nil {
 			return a.tbStatus(), err
 		}
 		a.syncThunderbird()
+		a.refreshInstalledXPI(true) // the installed add-on gets the new key on the next Thunderbird start
 		return a.tbStatus(), nil
 	})
 	type openMail struct {

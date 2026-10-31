@@ -48,7 +48,9 @@ const until = async (what, fn, ms = 15000) => {
     ],
     "f-in": [{ id: 201, subject: "Napi értékesítés " + ymd(today), author: "x@y.hu", recipients: [], date: today, folder: inbox }],
   };
-  const storage = { key: tb.key, port };
+  // Installed from the BI Monitor: no own settings, the package carries config.json.
+  const storage = {};
+  let builtIn = { port, key: tb.key, issued: "2026-10-31T10:00:00Z" };
   const calls = { opened: [], notes: [], badge: [] };
   const listeners = {};
   const ev = name => ({ addListener: fn => { listeners[name] = fn; } });
@@ -56,6 +58,7 @@ const until = async (what, fn, ms = 15000) => {
     runtime: {
       getManifest: () => JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")),
       getBrowserInfo: async () => ({ name: "Thunderbird", version: "128.4.0esr" }),
+      getURL: p => "data:application/json," + encodeURIComponent(JSON.stringify(builtIn)),
       onMessage: ev("message"), openOptionsPage() {},
     },
     storage: { local: { get: async () => Object.assign({}, storage), set: async v => Object.assign(storage, v) }, onChanged: ev("storage") },
@@ -76,6 +79,9 @@ const until = async (what, fn, ms = 15000) => {
   };
   const ctx = vm.createContext({ messenger, fetch, AbortController, setTimeout, clearTimeout, setInterval, clearInterval, console, Date, URL });
   for (const f of ["lib.js", "background.js"]) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", f), "utf8"), ctx, { filename: f });
+
+  await until("built-in config applied", async () => storage.key === tb.key && storage.port === port);
+  console.log("0. beépített beállítás átvéve → port", storage.port, "kulcs ok");
 
   // 3. First scan: yesterday's message only (today's is in the inbox, not watched) → missing.
   const st1 = await until("missing", async () => {
@@ -111,13 +117,21 @@ const until = async (what, fn, ms = 15000) => {
   console.log("5. popup →", state.state.connected, state.state.status.items.map(i => i.name + ": " + i.label).join(", "));
   assert.ok(state.state.connected);
 
-  // 8. Wrong key → clear error in the popup.
+  // 8. Wrong key typed by hand → clear error in the popup (the built-in config
+  //    is not re-applied: same "issued").
   storage.key = "rossz";
   await listeners.storage();
   await sleep(500);
   const bad = await listeners.message({ type: "getState" });
   console.log("6. rossz kulcs →", bad.state.connected, "|", bad.state.error);
   assert.ok(!bad.state.connected && /kulcs/.test(bad.state.error));
+
+  // 9. The BI Monitor issued a new key and updated the package → taken over.
+  builtIn = { port, key: tb.key, issued: "2026-10-31T11:00:00Z" };
+  await listeners.storage();
+  await until("new built-in key", async () => storage.key === tb.key);
+  const good = await until("connected again", async () => { const s = await listeners.message({ type: "getState" }); return s.state.connected && s; });
+  console.log("7. új kulcs a csomagban → átvéve, kapcsolódva:", good.state.connected);
   await rpc("deleteItem", { id });
   await rpc("tbSave", { enabled: false, port, staleMin: 15 });
   console.log("OK");

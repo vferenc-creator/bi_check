@@ -283,6 +283,13 @@ type ThunderbirdSettings struct {
 	// StaleMin: after this many minutes without a report from Thunderbird
 	// the e-mail items become "unreachable".
 	StaleMin int `json:"staleMin"`
+	// KeyIssued changes with every new key (the add-on takes over a newer
+	// key from its built-in config.json).
+	KeyIssued string `json:"keyIssued,omitempty"`
+	// Installed: profile folders the add-on was installed into by the app,
+	// and the version installed (updated automatically with the app).
+	Installed        []string `json:"installed,omitempty"`
+	InstalledVersion string   `json:"installedVersion,omitempty"`
 }
 
 // DefaultThunderbirdPort is the local port of the add-on API.

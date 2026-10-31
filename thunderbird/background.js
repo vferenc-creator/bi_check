@@ -15,8 +15,28 @@ let tbVersion = "";
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Installed from the BI Monitor ("Telepítés a Thunderbirdbe"): the package
+// carries config.json with this computer's port and pairing key. It is used
+// when the add-on has no key yet, or when the BI Monitor issued a new key.
+async function applyBuiltInConfig(stored) {
+  let pre;
+  try {
+    const r = await fetch(messenger.runtime.getURL("config.json"));
+    if (!r.ok) return false;
+    pre = await r.json();
+  } catch (_) {
+    return false; // installed by hand: no built-in config
+  }
+  if (!pre || !pre.key) return false;
+  if (stored.key && (!pre.issued || pre.issued === stored.configIssued)) return false;
+  await messenger.storage.local.set({ key: pre.key, port: pre.port || DEFAULTS.port, configIssued: pre.issued || "" });
+  return true;
+}
+
 async function loadCfg() {
-  cfg = Object.assign({}, DEFAULTS, await messenger.storage.local.get(Object.keys(DEFAULTS)));
+  const stored = await messenger.storage.local.get(Object.keys(DEFAULTS).concat(["configIssued"]));
+  if (await applyBuiltInConfig(stored)) Object.assign(stored, await messenger.storage.local.get(["key", "port", "configIssued"]));
+  cfg = Object.assign({}, DEFAULTS, stored);
 }
 
 async function api(path, opts = {}, override) {

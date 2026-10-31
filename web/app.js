@@ -1735,7 +1735,12 @@ function tbConnText(st) {
   const live = last && Date.now() - last < 120000;
   if (!st.enabled) return { live: false, cls: "st-disabled", label: "kikapcsolva", text: "" };
   if (st.error) return { live: false, cls: "st-missing", label: "hiba", text: st.error };
-  if (!last) return { live: false, cls: "st-unreachable", label: "nincs kapcsolat", text: "A bővítmény még nem jelentkezett. Telepítse, és illessze be a párosító kulcsot (lent)." };
+  if (!last) {
+    const inst = (st.profiles || []).some(p => p.installed);
+    return { live: false, cls: "st-unreachable", label: "nincs kapcsolat", text: inst
+      ? "A bővítmény telepítve van, de még nem jelentkezett: indítsa (újra) a Thunderbirdöt, és engedélyezze a „BI Output Monitor” kiegészítőt."
+      : "A bővítmény még nem jelentkezett. Telepítse a fenti gombbal." };
+  }
   const parts = [];
   if (info.tbVersion) parts.push("Thunderbird " + info.tbVersion);
   if (info.extVersion) parts.push("bővítmény " + info.extVersion);
@@ -1760,6 +1765,35 @@ async function copyText(text, input) {
   toast("Kimásolva a vágólapra.");
 }
 
+// One click: the add-on (with this computer's connection settings) goes into
+// the Thunderbird profile; Thunderbird only asks to enable it on next start.
+function tbInstallBox(st, card) {
+  const profs = st.profiles || [];
+  const target = profs.filter(p => p.default);
+  const installed = target.length && target.every(p => p.installed);
+  const running = target.some(p => p.running);
+  const out = h("div", { class: "small", style: { lineHeight: 1.5 } });
+  const btn = h("button", { class: "btn " + (installed ? "" : "primary"), disabled: !!st.profileError, onclick: async () => {
+    btn.disabled = true;
+    try {
+      const r = await api("tbInstall");
+      S.tbInstallMsg = r.message;
+      S.settings = (await api("bootstrap")).settings;
+      await drawThunderbird(card);
+    } catch (e) { fail(e); btn.disabled = false; }
+  } }, icon("download"), installed ? "Bővítmény újratelepítése" : "Telepítés a Thunderbirdbe");
+  if (st.profileError) out.append(h("span", { class: "muted" }, st.profileError));
+  else {
+    out.append(h("span", { class: "muted" }, "Thunderbird-profil: ", target.map(p => p.name).join(", ") || "–",
+      installed ? " · a bővítmény telepítve" + (st.info && st.info.extVersion ? " (" + st.info.extVersion + ")" : "") : "",
+      running ? " · a Thunderbird most fut" : ""));
+  }
+  return h("div", { class: "tb-install" },
+    h("div", { class: "row wrap", style: { gap: "10px" } }, btn,
+      h("span", { class: "small muted grow" }, "Egy kattintás: bekapcsolja a kapcsolatot, és a beállításokkal együtt a Thunderbirdbe teszi a bővítményt. A Thunderbird következő indításakor csak engedélyezni kell.")),
+    out, S.tbInstallMsg && !tbConnText(st).live ? h("div", { class: "okbox", style: { marginTop: "4px" } }, "✔ " + S.tbInstallMsg) : "");
+}
+
 async function drawThunderbird(card, row, sw) {
   row = row || ((title, hint, ctrl) => h("div", { class: "setting-row" }, h("div", { class: "lbl" }, h("b", {}, title), hint ? h("span", {}, hint) : null), ctrl));
   let st;
@@ -1772,6 +1806,7 @@ async function drawThunderbird(card, row, sw) {
     h("p", { class: "small muted", style: { marginTop: 0, lineHeight: 1.5 } },
       "Az időzítve kiküldött riport-e-mailek figyelése: a BI Monitor Thunderbird-bővítménye ezen a gépen megnézi a levelezésben (alapból az Elküldött mappákban), hogy a várt tárgyú e-mail kiment-e. ",
       "Az e-mailes elemek a többi elemhez hasonlóan ütemezhetők és értesítenek (Új elem → E-mail)."),
+    tbInstallBox(st, card),
     row("Thunderbird-kapcsolat", "Csak ezen a gépen érhető el (127.0.0.1). Mentés után lép életbe.",
       h("label", { class: "switch" }, h("input", { type: "checkbox", checked: d.enabled, onchange: e => { d.enabled = e.target.checked; } }))));
   if (st.enabled) {
@@ -1786,8 +1821,8 @@ async function drawThunderbird(card, row, sw) {
         } }, "Új kulcs"))));
     body.append(row("Helyi port", "Alapból 47231. Csak akkor változtassa, ha foglalt; a bővítményben is ugyanezt kell megadni.", num("port", 1024, 65535)));
     body.append(row("Riasztás, ha a Thunderbird nem jelentkezik", "Perc. Ennyi idő után lesznek az e-mailes elemek „Elérhetetlen”-ek (pl. ha nem fut a Thunderbird).", num("staleMin", 2, 1440)));
-    body.append(h("div", { class: "small", style: { lineHeight: 1.6, marginTop: "10px" } },
-      h("b", {}, "Telepítés a Thunderbirdbe:"), h("br"),
+    body.append(h("details", { class: "small", style: { lineHeight: 1.6, marginTop: "10px" } },
+      h("summary", { style: { cursor: "pointer", fontWeight: 600 } }, "Kézi telepítés (ha a fenti gomb nem használható)"),
       "1. Töltse le a bővítményt: ", h("a", { href: "#", onclick: e => { e.preventDefault(); api("openURL", TB_XPI).catch(fail); } }, "BIMonitor-Thunderbird.xpi"), h("br"),
       "2. Thunderbird → ", h("i", {}, "Kiegészítők és témák"), " → fogaskerék → ", h("i", {}, "Kiegészítő telepítése fájlból…"), h("br"),
       "3. A bővítmény beállításaiban illessze be a párosító kulcsot, és jelölje ki a figyelt mappákat.", h("br"),

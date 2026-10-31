@@ -264,11 +264,19 @@ locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az �
 
 Az időzítve kiküldött riport-e-maileket (pl. a BI rendszer napi e-mailes riportja) is figyelni lehet, pontosan úgy, mint a fájlokat: ütemezés, türelmi idő, üres ablak, értesítés. Az ellenőrzést a **BI Monitor Thunderbird-bővítménye** végzi abban a Thunderbirdben, ahol a kiküldő fiók be van állítva – jelszót vagy levelezési hozzáférést a BI Monitor nem kap, a bővítmény csak a figyelt tárgyú levelek adatait (tárgy, dátum, mappa, feladó, címzettek) küldi át.
 
-**Beállítás (egyszer, azon a gépen, ahol a Thunderbird fut):**
-1. BI Monitor → *Beállítások → Thunderbird (e-mail figyelés)* → **Thunderbird-kapcsolat** be → *Mentés*. Megjelenik a **párosító kulcs**.
-2. Töltse le a bővítményt: [BIMonitor-Thunderbird.xpi](https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor-Thunderbird.xpi) (a kiadás része; Thunderbird 115 vagy újabb kell).
-3. Thunderbird → *Kiegészítők és témák* → fogaskerék → *Kiegészítő telepítése fájlból…* → a letöltött `.xpi`.
-4. A bővítmény beállításaiban illessze be a párosító kulcsot (*Kapcsolat tesztelése* → „Kapcsolódva”), és jelölje ki a figyelt mappákat. Alapból minden fiók **Elküldött** mappáját figyeli.
+**Beállítás (egyszer, azon a gépen, ahol a Thunderbird fut) – egy gombnyomás:**
+1. BI Monitor → *Beállítások → Thunderbird (e-mail figyelés)* → **Telepítés a Thunderbirdbe**. Ez bekapcsolja a kapcsolatot, és a bővítményt – a gép kapcsolati beállításaival (port, párosító kulcs) együtt – a Thunderbird alapértelmezett profiljába teszi (`<profil>\extensions\bimonitor@energofish.hu.xpi`).
+2. Indítsa el (ha fut: zárja be és indítsa újra) a Thunderbirdöt. A Thunderbird jelzi, hogy új kiegészítő került hozzá – **engedélyezze**. Kész: a bővítmény magától kapcsolódik, alapból minden fiók **Elküldött** mappáját figyeli (ez a bővítmény beállításaiban módosítható).
+
+A BI Monitor frissítésekor a telepített bővítmény is frissül (a Thunderbird következő indításakor). *Új kulcs* esetén a bővítmény is megkapja az újat.
+
+<details><summary>Kézi telepítés (ha a gomb nem használható, pl. nem található Thunderbird-profil)</summary>
+
+1. *Beállítások → Thunderbird* → kapcsolat be → *Mentés*; megjelenik a **párosító kulcs**.
+2. Töltse le: [BIMonitor-Thunderbird.xpi](https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor-Thunderbird.xpi) (Thunderbird 115 vagy újabb).
+3. Thunderbird → *Kiegészítők és témák* → fogaskerék → *Kiegészítő telepítése fájlból…*
+4. A bővítmény beállításaiban illessze be a kulcsot (*Kapcsolat tesztelése* → „Kapcsolódva”).
+</details>
 
 **E-mail figyelés felvétele**
 - BI Monitor: *Új elem* → *Mit figyel?* → **E-mail**: a tárgy (minta), ha kell a mappa (pl. `Elküldött`) és a feladó/címzett (pl. `vezetes@`).
