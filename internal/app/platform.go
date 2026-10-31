@@ -36,6 +36,9 @@ type Platform interface {
 
 	SetAutostart(enabled bool) error
 	AutostartEnabled() bool
+
+	// ShowWindow opens (or brings forward) the main window.
+	ShowWindow()
 }
 
 // NullPlatform does nothing; embed it in fakes.
@@ -54,3 +57,4 @@ func (NullPlatform) ShowInFolder(string) error                  { return nil }
 func (NullPlatform) ToUNC(p string) (string, bool)              { return p, false }
 func (NullPlatform) SetAutostart(bool) error                    { return nil }
 func (NullPlatform) AutostartEnabled() bool                     { return false }
+func (NullPlatform) ShowWindow()                                {}

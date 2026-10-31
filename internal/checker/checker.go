@@ -21,6 +21,9 @@ const (
 	Found       Kind = "found"
 	NotFound    Kind = "notFound"
 	Unreachable Kind = "unreachable"
+	// NoData: this computer cannot check the item at all (e.g. an e-mail
+	// rule without a Thunderbird connection here). Not a problem, no alert.
+	NoData Kind = "noData"
 )
 
 // Result of checking one path.

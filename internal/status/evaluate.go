@@ -72,6 +72,11 @@ func Evaluate(in Input) Output {
 	r := in.Result
 	out := Output{}
 
+	if r.Kind == checker.NoData {
+		out.Status = model.StatusUnknown
+		out.Reason = r.Reason
+		return out
+	}
 	if r.Kind == checker.Unreachable {
 		out.Status = model.StatusUnreachable
 		out.Reason = r.Reason

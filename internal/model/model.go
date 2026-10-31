@@ -88,6 +88,24 @@ const (
 	TokenAny  TokenMode = "any" // match any digits of the same length
 )
 
+// KindEmail marks items watched through the Thunderbird add-on.
+const KindEmail = "email"
+
+// IsEmail reports whether the item watches e-mails.
+func (it *Item) IsEmail() bool { return it.Kind == KindEmail }
+
+// MailRule describes the e-mail an item expects.
+type MailRule struct {
+	// Subject pattern: text (matches if the subject contains it), or with
+	// * / ? wildcards and date tokens like {yyyy.MM.dd}.
+	Subject string `json:"subject,omitempty"`
+	// Folder: only messages in folders whose name/path contains this
+	// (empty = every folder the add-on watches).
+	Folder string `json:"folder,omitempty"`
+	// Party: only messages whose sender or recipients contain this.
+	Party string `json:"party,omitempty"`
+}
+
 // GapWindow is a daily time window in which the file may be missing – for
 // example a script deletes it before writing the new version. Inside the
 // window "missing" or "late" is shown as waiting, without a notification.
@@ -180,6 +198,11 @@ type Item struct {
 	Enabled bool `json:"enabled"`
 	Notify  bool `json:"notify"`
 
+	// Kind: "" = a file / file name pattern / folder (Path), "email" = an
+	// e-mail seen by the Thunderbird add-on (Mail).
+	Kind string   `json:"kind,omitempty"`
+	Mail MailRule `json:"mail,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 
@@ -251,6 +274,20 @@ type SharedList struct {
 }
 
 // TeamSettings configure the shared ("közös") mode.
+// ThunderbirdSettings: the local connection of the Thunderbird add-on
+// (personal, per computer).
+type ThunderbirdSettings struct {
+	Enabled bool   `json:"enabled"`
+	Port    int    `json:"port"` // 127.0.0.1 only
+	Key     string `json:"key"`  // pairing key the add-on must send
+	// StaleMin: after this many minutes without a report from Thunderbird
+	// the e-mail items become "unreachable".
+	StaleMin int `json:"staleMin"`
+}
+
+// DefaultThunderbirdPort is the local port of the add-on API.
+const DefaultThunderbirdPort = 47231
+
 type TeamSettings struct {
 	Enabled bool   `json:"enabled"`
 	Folder  string `json:"folder"`  // UNC path of the shared folder
@@ -284,8 +321,9 @@ type Settings struct {
 	SharedLists   []SharedList            `json:"sharedLists,omitempty"`
 	Overrides     map[string]ItemOverride `json:"overrides,omitempty"`
 	// MutedGroups: personal – no notifications for reports of these groups.
-	MutedGroups []string     `json:"mutedGroups,omitempty"`
-	Team        TeamSettings `json:"team"`
+	MutedGroups []string            `json:"mutedGroups,omitempty"`
+	Team        TeamSettings        `json:"team"`
+	Thunderbird ThunderbirdSettings `json:"thunderbird"`
 
 	Items []Item `json:"items"`
 }
@@ -308,7 +346,8 @@ func DefaultSettings() Settings {
 			OnRecovery: true,
 			Quiet:      QuietHours{From: "22:00", To: "06:00"},
 		},
-		Items: []Item{},
+		Thunderbird: ThunderbirdSettings{Port: DefaultThunderbirdPort, StaleMin: 15},
+		Items:       []Item{},
 	}
 }
 
@@ -317,6 +356,12 @@ func (s *Settings) Normalize() {
 	d := DefaultSettings()
 	if s.CheckIntervalSec < 10 {
 		s.CheckIntervalSec = d.CheckIntervalSec
+	}
+	if s.Thunderbird.Port <= 0 || s.Thunderbird.Port > 65535 {
+		s.Thunderbird.Port = d.Thunderbird.Port
+	}
+	if s.Thunderbird.StaleMin <= 0 {
+		s.Thunderbird.StaleMin = d.Thunderbird.StaleMin
 	}
 	if s.TimeoutSec < 1 {
 		s.TimeoutSec = d.TimeoutSec

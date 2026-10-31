@@ -85,6 +85,8 @@ type Config struct {
 	OnChange func()
 	// SizeHistory returns recent arrival sizes (newest first) for an item.
 	SizeHistory func(id string) []int64
+	// MailCheck checks e-mail items (Thunderbird add-on); nil = not supported.
+	MailCheck func(it model.Item, ref time.Time, anyDate bool) checker.Result
 	// ConfirmUnreachable is the delay of the confirming re-check before an
 	// item turns unreachable (0 = 20s, negative = report right away).
 	ConfirmUnreachable time.Duration
@@ -156,10 +158,12 @@ type checkRelevant struct {
 	Rules    model.SuspiciousRules
 	Gap      model.GapWindow
 	Enabled  bool
+	Kind     string
+	Mail     model.MailRule
 }
 
 func relevant(it model.Item) checkRelevant {
-	return checkRelevant{it.Path, it.Token, it.Schedule, it.GraceMinutes, it.EarlyMinutes, it.Suspicious, it.Gap, it.Enabled}
+	return checkRelevant{it.Path, it.Token, it.Schedule, it.GraceMinutes, it.EarlyMinutes, it.Suspicious, it.Gap, it.Enabled, it.Kind, it.Mail}
 }
 
 // Configure replaces the item list and timing settings. States of unchanged
@@ -403,11 +407,22 @@ func (e *Engine) checkOne(en *entry) {
 	if hasExp {
 		ref = exp
 	}
-	res := e.cfg.Checker.Check(item.Path, ref.In(e.cfg.Loc), item.Token == model.TokenAny)
+	var res checker.Result
+	rules, sizes := item.Suspicious, []int64(nil)
+	switch {
+	case item.IsEmail() && e.cfg.MailCheck != nil:
+		res = e.cfg.MailCheck(item, ref.In(e.cfg.Loc), item.Token == model.TokenAny)
+		rules = model.SuspiciousRules{} // size rules make no sense for e-mails
+	case item.IsEmail():
+		res = checker.Result{Kind: checker.NoData, Reason: "Az e-mailes figyelés itt nem érhető el."}
+	default:
+		res = e.cfg.Checker.Check(item.Path, ref.In(e.cfg.Loc), item.Token == model.TokenAny)
+		sizes = e.cfg.SizeHistory(item.ID)
+	}
 	out := status.Evaluate(status.Input{
 		Now: e.cfg.Now(), Expected: exp, HasExpected: hasExp, PrevExpected: prev,
-		Grace: item.Grace(), Early: item.Early(), Result: res, Rules: item.Suspicious, Gap: item.Gap,
-		RecentSizes: e.cfg.SizeHistory(item.ID), Loc: e.cfg.Loc,
+		Grace: item.Grace(), Early: item.Early(), Result: res, Rules: rules, Gap: item.Gap,
+		RecentSizes: sizes, Loc: e.cfg.Loc,
 	})
 
 	ns := old

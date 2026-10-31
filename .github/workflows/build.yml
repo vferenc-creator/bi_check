@@ -24,6 +24,14 @@ jobs:
       - run: go vet ./...
       - run: GOOS=windows go vet -unsafeptr=false ./...
       - run: go test ./...
+      - name: Thunderbird add-on – unit tests
+        run: node --test thunderbird/test/lib.test.js
+      - name: Thunderbird add-on – end-to-end with the real application (simulated Thunderbird)
+        run: |
+          go build -o "$RUNNER_TEMP/devserver" ./cmd/devserver
+          "$RUNNER_TEMP/devserver" -addr 127.0.0.1:8787 -data "$RUNNER_TEMP/dev" > "$RUNNER_TEMP/dev.log" 2>&1 &
+          for i in $(seq 1 50); do curl -s -o /dev/null http://127.0.0.1:8787/ && break; sleep 0.2; done
+          node thunderbird/test/integration.js http://127.0.0.1:8787 || { cat "$RUNNER_TEMP/dev.log"; exit 1; }
 
   windows:
     runs-on: windows-latest
@@ -99,6 +107,17 @@ jobs:
         with:
           name: BIMonitor-exe
           path: dist
+      - name: Thunderbird add-on (.xpi)
+        run: |
+          mkdir -p xpi && cp -r thunderbird/* xpi/ && rm -rf xpi/test
+          python3 - <<'PY'
+          import json, os
+          m = json.load(open("xpi/manifest.json", encoding="utf-8"))
+          m["version"] = os.environ["VERSION"]
+          json.dump(m, open("xpi/manifest.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+          (cd xpi && zip -r -X ../dist/BIMonitor-Thunderbird.xpi .)
+          unzip -l dist/BIMonitor-Thunderbird.xpi
       - name: Release notes
         run: |
           prev=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
@@ -122,6 +141,7 @@ jobs:
         run: |
           gh release create "v$VERSION" \
             "dist/BIMonitor.exe" \
+            "dist/BIMonitor-Thunderbird.xpi" \
             "docs/BIMonitor_minta_elemek.json" \
             --title "Energofish BI Output Monitor $VERSION" \
             --notes-file notes.md \

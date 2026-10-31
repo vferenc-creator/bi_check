@@ -11,11 +11,12 @@ Windows-os tálcaalkalmazás az Energofish Kft. BI/kontrolling csapatának. Figy
 - hálózati hibákat külön kezeli: lassú vagy kieső megosztásnál sem jelez tévesen „Hiányzik”-ot
 - előzmények, pontossági statisztika, eseménynapló
 - **közös mód:** egy riportlista az egész csapatnak, zárolással és változásnaplóval
+- **e-mailek figyelése:** Thunderbird-bővítménnyel az időzítve kiküldött riport-e-maileket is figyeli
 
 ## ⬇️ Letöltés
 
 **Mindig a legfrissebb verzió:** <https://github.com/vferenc-creator/bi_check/releases/latest>
-(közvetlen link az exe-re: <https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor.exe>)
+(közvetlen link az exe-re: <https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor.exe>, a Thunderbird-bővítményre: <https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor-Thunderbird.xpi>)
 
 Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` + `BIMonitor_minta_elemek.json` mintalista).
 
@@ -36,7 +37,7 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 5. [Állapotok](#állapotok)
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
-8. [Közös mód (csapat)](#közös-mód-csapat) · [Import/export](#importexport)
+8. [Közös mód (csapat)](#közös-mód-csapat) · [E-mailek figyelése (Thunderbird)](#e-mailek-figyelése-thunderbird) · [Import/export](#importexport)
 9. [Beállítások](#beállítások)
 10. [Hol tárolja az adatokat?](#hol-tárolja-az-adatokat)
 11. [Parancssori kapcsolók](#parancssori-kapcsolók)
@@ -69,9 +70,10 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 2. **Név**, **csoport** (pl. KNIME, DyntellBI, ERP export, Riport), **felelős**, **megjegyzés** (pl. melyik workflow állítja elő, mi a teendő hiba esetén).
 3. **Útvonal:** írja be a UNC útvonalat (`\\EFS-FSRHQ\Groups\BI\export.xlsx`), vagy válassza ki a **Tallózás…** gombbal.
 4. **Ütemezés:** válassza ki a típust. A jobb oldali **Ütemezés előnézet** azonnal mutatja a következő elvárt időpontokat, így rögtön látszik, ha valami rosszul van beállítva (cron, ünnepnapok).
-5. **Tolerancia:** türelmi idő, korai érkezés, és ha kell, **üres ablak** (lásd lent).
-6. **Útvonal tesztelése:** megnézi a fájlt most, és megmutatja, milyen állapot lenne.
-7. **Felvétel**. Az elem azonnal ellenőrzésre kerül.
+5. **Időpont:** írja be (`630`, `6:30`, `06.30` – mind 06:30 lesz), vagy válasszon az óra-ikonos listából; `↑`/`↓` 5 percet léptet, `Shift`-tel egy órát. A görgő nem állítja át az értéket.
+6. **Tolerancia:** türelmi idő, korai érkezés, és ha kell, **üres ablak** (lásd lent).
+7. **Kipróbálás most:** megnézi a fájlt (mappát, e-mailt) most, és megmutatja, milyen állapot lenne.
+8. **Felvétel**. Az elem azonnal ellenőrzésre kerül.
 
 A listában egy sorra kattintva megnyílik a **részletpanel**: indoklás, elvárt időpont, határidő, a talált fájl, előzmények, statisztika. Dupla kattintás: szerkesztés. A sor végén lévő „…” menüben: szerkesztés, duplikálás, ki-/bekapcsolás, nyugtázás, fájl vagy mappa megnyitása, törlés. A felső sáv állapotcímkéire (OK, Hiányzik…) kattintva a lista az adott állapotra szűr.
 
@@ -89,6 +91,7 @@ A szerkesztő *Útvonal* részén három mód közül lehet választani:
 | **Fájl** | egy konkrét fájl teljes útvonala (*Tallózás…*) | ha a fájl az elvárt időpont után módosult |
 | **Fájlnév minta** | a **mappa** (*Mappa…* gomb) és a **fájlnév minta**, pl. `sales_` vagy `riport_{yyyyMMdd}*.xlsx` | ha a legfrissebb illeszkedő fájl az elvárt időpont után módosult |
 | **Mappa** | csak a **mappa** | ha a mappába bármilyen új fájl érkezett (a legfrissebb dönt) |
+| **E-mail** | az e-mail **tárgya** (minta), ha kell mappa és feladó/címzett | ha a Thunderbird-bővítmény a figyelt mappákban talál ilyen levelet az elvárt időpont után – lásd [E-mailek figyelése](#e-mailek-figyelése-thunderbird) |
 
 - **Fájlnév-részlet:** ha a mintában nincs `*`, a program a végére teszi, vagyis a megadott résszel **kezdődő** fájlokat figyeli (`riport_` → `riport_*`). Így a dátumozott nevű fájlok (`riport_20261014.csv`, `riport_20261015.csv`…) is követhetők. Ha a részlet bárhol lehet a névben: `*riport*`.
 - **Mappa módban** almappákat nem néz, és a Windows/Office segédfájlok (`Thumbs.db`, `desktop.ini`, `~$…` ideiglenes Office-fájlok) nem számítanak.
@@ -257,6 +260,33 @@ locks\<azonosító>.lock     szerkesztési zár (ki, melyik gépen, mióta; az �
 - A zárat a program „csak ha még nem létezik” módon hozza létre. Ezt a fájlszerver dönti el, ezért ketten sosem kaphatják meg egyszerre.
 - Két valódi gépen elvégzendő kézi tesztek: [docs/kozos-mod-kezi-teszt.md](docs/kozos-mod-kezi-teszt.md).
 
+## E-mailek figyelése (Thunderbird)
+
+Az időzítve kiküldött riport-e-maileket (pl. a BI rendszer napi e-mailes riportja) is figyelni lehet, pontosan úgy, mint a fájlokat: ütemezés, türelmi idő, üres ablak, értesítés. Az ellenőrzést a **BI Monitor Thunderbird-bővítménye** végzi abban a Thunderbirdben, ahol a kiküldő fiók be van állítva – jelszót vagy levelezési hozzáférést a BI Monitor nem kap, a bővítmény csak a figyelt tárgyú levelek adatait (tárgy, dátum, mappa, feladó, címzettek) küldi át.
+
+**Beállítás (egyszer, azon a gépen, ahol a Thunderbird fut):**
+1. BI Monitor → *Beállítások → Thunderbird (e-mail figyelés)* → **Thunderbird-kapcsolat** be → *Mentés*. Megjelenik a **párosító kulcs**.
+2. Töltse le a bővítményt: [BIMonitor-Thunderbird.xpi](https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor-Thunderbird.xpi) (a kiadás része; Thunderbird 115 vagy újabb kell).
+3. Thunderbird → *Kiegészítők és témák* → fogaskerék → *Kiegészítő telepítése fájlból…* → a letöltött `.xpi`.
+4. A bővítmény beállításaiban illessze be a párosító kulcsot (*Kapcsolat tesztelése* → „Kapcsolódva”), és jelölje ki a figyelt mappákat. Alapból minden fiók **Elküldött** mappáját figyeli.
+
+**E-mail figyelés felvétele**
+- BI Monitor: *Új elem* → *Mit figyel?* → **E-mail**: a tárgy (minta), ha kell a mappa (pl. `Elküldött`) és a feladó/címzett (pl. `vezetes@`).
+- Vagy a Thunderbirdben egy kiment levélen **jobb gomb → „BI Monitor: figyelés erre az e-mailre…”**: a BI Monitorban kitöltött szerkesztő nyílik meg – a tárgyban lévő dátumból token lesz (`Napi riport 2026.10.30` → `Napi riport {yyyy.MM.dd:-1d}`, ha a levél egy nappal később ment ki), az elvárt időpont a kiküldés ideje.
+
+**Tárgyminta:** ha nincs benne `*`, az ilyen szöveget **tartalmazó** tárgyak számítanak (kis-/nagybetű és dupla szóköz nem számít). Dátum: `{yyyy.MM.dd}`, `{yyyyMMdd}`, eltolással `{yyyy.MM.dd:-1d}`; `*` = bármi. A bővítmény az elmúlt 40 nap leveleit nézi.
+
+**A bővítmény a Thunderbirdben**
+- Eszköztár-gomb (**BI Monitor**): a jelvényen a problémás e-mailek száma (`!` = nincs kapcsolat a BI Monitorral). Lenyitva: az e-mail figyelések állapota, az utolsó illeszkedő levél, **Megnyitás** (a levél megnyitása), **Részletek** (a BI Monitorban), *Keresés most*.
+- Beállítások: párosító kulcs, port, figyelt mappák, keresési gyakoriság (alapból 2 perc), és kérésre Thunderbird-értesítés is, ha egy e-mail kimaradt.
+- Új levél a figyelt mappában → fél percen belül újrakeres. A BI Monitor *Ellenőrzés most* gombja is azonnali keresést kér.
+
+**A BI Monitorban:** az e-mailes elemek a listában ✉ jellel látszanak; a részletpanelen a megtalált levél, a legutóbbi illeszkedő levelek, és a **Thunderbird** gomb (megnyitja a levelet a Thunderbirdben).
+
+**Ha a Thunderbird nem fut:** a beállított idő (alapból 15 perc) után az e-mailes elemek „Elérhetetlen”-ek lesznek, erről egyetlen összevont értesítés jön („Thunderbird nem érhető el”). Azokon a gépeken, ahol a Thunderbird-kapcsolat nincs bekapcsolva (pl. közös módban a kollégáknál), az e-mailes elemek „Ismeretlen” állapotúak, és nem jeleznek.
+
+**Biztonság:** a kapcsolat csak a saját gépen belül él (`127.0.0.1`, alapból a 47231-es port – nem nyit tűzfalat), minden kérésnek a párosító kulcsot kell hoznia, és böngészőből (weboldalról) nem érhető el. Új kulcs: *Beállítások → Thunderbird → Új kulcs* (utána a bővítményben is cserélni kell).
+
 ## Import/export
 
 **Export / import** (lista fejléce vagy Beállítások → Adatok):
@@ -344,7 +374,7 @@ Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
 - **WebView2** felület (`github.com/jchv/go-webview2/pkg/edge`, tiszta Go) **vanilla JS/CSS** frontenddel, build lépés nélkül. Az ablak csak megnyitáskor jön létre és bezáráskor felszabadul, így a háttérben nem fogyaszt böngészőmemóriát.
 - **Saját Win32 réteg** (`golang.org/x/sys/windows`): tálcaikon, menü, fájlválasztó, registry, `WNetGetConnection`, egypéldányos futás. Nincs harmadik féltől származó tálcakönyvtár, ami ütközne az üzenetkezelő ciklussal.
 - **Adattárolás:** `settings.json` (atomikus írás) a beállításokhoz, **SQLite** (`modernc.org/sqlite`, tiszta Go) az előzményekhez.
-- A JS ↔ Go kommunikáció WebView2 üzenetekkel történik, nincs helyi HTTP port, így tűzfal-felugró ablak sincs.
+- A JS ↔ Go kommunikáció WebView2 üzenetekkel történik. Helyi HTTP port csak a Thunderbird-kapcsolat bekapcsolásakor nyílik, kizárólag `127.0.0.1`-en (tűzfal-felugró ablak nélkül).
 
 ### Könyvtárszerkezet
 ```
@@ -359,11 +389,13 @@ internal/status/     állapot-kiértékelés (OK/Késik/Hiányzik/Elérhetetlen/
 internal/engine/     háttérütemező: mikor mit kell ellenőrizni, „Elérhetetlen” megerősítése
 internal/notify/     értesítési szabályok (ismétlésgátlás, csendes időszak, összevonás)
 internal/store/      settings.json + history.db
+internal/mailwatch/  e-mail figyelés: a Thunderbird-bővítmény jelentései → ellenőrzési eredmény
 internal/teamstore/  ★ közös mód: riportfájlok, zárolás, ütközéskezelés, offline gyorsítótár – párhuzamos tesztekkel
 internal/app/        platformfüggetlen alkalmazásmag + a felület RPC API-ja
 internal/desktop/    Windows héj: tálca, WebView2 ablak, értesítések
 internal/winapi/     Win32 hívások
 web/                 index.html, styles.css, app.js (go:embed-del az exe-be kerül)
+thunderbird/         a Thunderbird-bővítmény (MailExtension): background.js, popup, options, lib.js + tesztek
 tools/genres/        ikon, manifest, verzióinfó → .syso (a brandingből)
 tools/genicon/       az ikon vektoros újrarajzolása
 ```
@@ -378,7 +410,7 @@ Az eredmény a `dist\BIMonitor.exe`. A build előbb lefuttatja a `tools/genres`-
 ### Kiadások (Releases)
 A `.github/workflows/build.yml` minden pushnál tesztel és buildel. Az alapértelmezett ágra és a `claude/nifty-tesla-wqcp1f` fejlesztési ágra érkező, minden ellenőrzésen átment push után **automatikusan GitHub Release készül** „Latest” jelöléssel:
 - verziószám: a `VERSION` fájl (pl. `1.0`) + a build sorszáma → pl. `v1.0.22`;
-- csatolmányok: `BIMonitor.exe` és a `docs/BIMonitor_minta_elemek.json` mintalista;
+- csatolmányok: `BIMonitor.exe`, `BIMonitor-Thunderbird.xpi` (a `thunderbird/` mappából, a kiadás verziószámával) és a `docs/BIMonitor_minta_elemek.json` mintalista;
 - a kiadási megjegyzés sablonja: `.github/release-notes.md`, a változáslista az előző kiadás óta érkezett commitokból készül.
 
 Új fő/alverziónál (pl. 1.1) elég a `VERSION` fájlt átírni.
@@ -387,6 +419,8 @@ A `.github/workflows/build.yml` minden pushnál tesztel és buildel. Az alapért
 ```
 go test ./...            # unit tesztek (ütemező, naptár, minták, checker, állapot, motor, értesítés, tárolás, app)
 go test -race ./...
+node --test thunderbird/test/lib.test.js                       # a Thunderbird-bővítmény segédfüggvényei
+node thunderbird/test/integration.js http://127.0.0.1:8787   # a valódi background.js szimulált Thunderbirddel a futó devserver ellen
 ```
 A GitHub Actions minden pushnál lefuttatja a teszteket Linuxon és Windowson is; a közös mód párhuzamossági tesztjeit Windowson (NTFS) tízszer egymás után, hogy a ritka versenyhelyzetek is kibukjanak. Lefordítja az exe-t, majd **valódi Windows-gépen elindítja** (`--selftest`, `--selftest-dialog`), és ellenőrzi, hogy a tálca, a WebView2 ablak, a JS–Go híd és a fájlválasztó működik. Az exe letölthető artefaktként.
 

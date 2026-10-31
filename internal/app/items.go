@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"bimonitor/internal/checker"
 	"bimonitor/internal/engine"
+	"bimonitor/internal/mailwatch"
 	"bimonitor/internal/model"
 	"bimonitor/internal/pathpattern"
 	"bimonitor/internal/schedule"
@@ -95,6 +97,24 @@ func (a *App) normalizeItem(it *model.Item) (warnings []string, err error) {
 	if it.Name == "" {
 		return nil, errors.New("a név megadása kötelező")
 	}
+	if it.IsEmail() {
+		it.Mail.Subject = strings.TrimSpace(it.Mail.Subject)
+		it.Mail.Folder = strings.TrimSpace(it.Mail.Folder)
+		it.Mail.Party = strings.TrimSpace(it.Mail.Party)
+		if it.Mail.Subject == "" {
+			return nil, errors.New("az e-mail tárgyának (mintájának) megadása kötelező")
+		}
+		if _, err := pathpattern.ParseText(it.Mail.Subject); err != nil {
+			return nil, fmt.Errorf("tárgyminta: %w", err)
+		}
+		// Path is only a readable label for e-mail items (lists, CSV, duplicates).
+		it.Path = "e-mail: " + it.Mail.Subject
+		if !a.Settings.Get().Thunderbird.Enabled {
+			warnings = append(warnings, "Ezen a gépen nincs bekapcsolva a Thunderbird-kapcsolat (Beállítások → Thunderbird) – az e-mailt az a gép figyeli, ahol a Thunderbird fut.")
+		}
+		return warnings, a.validateTiming(it)
+	}
+	it.Kind, it.Mail = "", model.MailRule{}
 	if it.Path == "" {
 		return nil, errors.New("az útvonal megadása kötelező")
 	}
@@ -109,25 +129,30 @@ func (a *App) normalizeItem(it *model.Item) (warnings []string, err error) {
 	if _, err := pathpattern.Parse(it.Path); err != nil {
 		return nil, err
 	}
+	return warnings, a.validateTiming(it)
+}
+
+// validateTiming checks the schedule and tolerances (files and e-mails).
+func (a *App) validateTiming(it *model.Item) error {
 	if _, err := schedule.Compile(it.Schedule, a.Calendar(), a.Loc); err != nil {
-		return nil, fmt.Errorf("ütemezés: %w", err)
+		return fmt.Errorf("ütemezés: %w", err)
 	}
 	if it.GraceMinutes < 0 || it.GraceMinutes > 7*24*60 {
-		return nil, errors.New("a türelmi idő 0 perc és 7 nap között lehet")
+		return errors.New("a türelmi idő 0 perc és 7 nap között lehet")
 	}
 	if it.EarlyMinutes < 0 || it.EarlyMinutes > 24*60 {
-		return nil, errors.New("a korai tolerancia 0 perc és 24 óra között lehet")
+		return errors.New("a korai tolerancia 0 perc és 24 óra között lehet")
 	}
 	if it.Suspicious.DropPercent < 0 || it.Suspicious.DropPercent > 99 {
-		return nil, errors.New("a méretcsökkenés küszöbe 0 és 99% között lehet")
+		return errors.New("a méretcsökkenés küszöbe 0 és 99% között lehet")
 	}
 	if it.Suspicious.MinBytes < 0 {
-		return nil, errors.New("a minimális méret nem lehet negatív")
+		return errors.New("a minimális méret nem lehet negatív")
 	}
 	if err := it.Gap.Validate(); err != nil {
-		return nil, err
+		return err
 	}
-	return warnings, nil
+	return nil
 }
 
 // SaveResult is returned by saveItem.
@@ -306,6 +331,9 @@ func (a *App) registerItemAPI() {
 
 	a.register("checkNow", func(id string) (Snapshot, error) {
 		a.Checker.ResetServers()
+		if a.Settings.Get().Thunderbird.Enabled {
+			a.Mail.Push(mailwatch.Command{Type: "scan"}) // the add-on searches again and reports
+		}
 		var done <-chan struct{}
 		if id == "" {
 			done = a.Engine.CheckNow()
@@ -354,9 +382,16 @@ func (a *App) registerItemAPI() {
 			prev, _ = sc.PrevBefore(exp)
 			ref = exp
 		}
-		res := a.Checker.Check(it.Path, ref.In(a.Loc), it.Token == model.TokenAny)
+		var res checker.Result
+		rules := it.Suspicious
+		if it.IsEmail() {
+			res = a.mailCheck(it, ref.In(a.Loc), it.Token == model.TokenAny)
+			rules = model.SuspiciousRules{}
+		} else {
+			res = a.Checker.Check(it.Path, ref.In(a.Loc), it.Token == model.TokenAny)
+		}
 		out := status.Evaluate(status.Input{Now: time.Now(), Expected: exp, HasExpected: has, PrevExpected: prev,
-			Grace: it.Grace(), Early: it.Early(), Result: res, Rules: it.Suspicious, Gap: it.Gap, Loc: a.Loc})
+			Grace: it.Grace(), Early: it.Early(), Result: res, Rules: rules, Gap: it.Gap, Loc: a.Loc})
 		tr := TestResult{Status: out.Status, Reason: out.Reason, Result: res, Warnings: warn, NormPath: it.Path}
 		if has {
 			tr.Expected = &exp
@@ -447,6 +482,17 @@ func (a *App) registerItemAPI() {
 			return errors.New("az elem nem található")
 		}
 		st, _ := a.Engine.State(p.ID)
+		if it.IsEmail() {
+			if st.File == nil {
+				return errors.New("még nincs megtalált e-mail")
+			}
+			m, ok := a.Mail.Find(it.ID, st.File.Name, st.File.ModTime, st.File.Path)
+			if !ok {
+				return errors.New("ez az e-mail már nincs a Thunderbird legutóbbi jelentésében")
+			}
+			a.Mail.Push(mailwatch.Command{Type: "open", MessageID: m.ID, HeaderID: m.HeaderID})
+			return nil
+		}
 		if p.Target == "file" {
 			if st.File == nil {
 				return errors.New("nincs megnyitható fájl (még nem található)")

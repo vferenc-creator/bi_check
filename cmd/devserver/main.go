@@ -78,6 +78,7 @@ func (p *devPlatform) FolderDialog(string, string) (string, bool) {
 
 func (p *devPlatform) SetAutostart(on bool) error { p.autostart = on; return nil }
 func (p *devPlatform) AutostartEnabled() bool     { return p.autostart }
+func (p *devPlatform) ShowWindow()                { log.Print("ShowWindow") }
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address")

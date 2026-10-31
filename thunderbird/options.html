@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<title>BI Monitor – e-mail figyelés beállításai</title>
+<link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<div class="head"><img src="icons/icon-32.png" alt=""><b>BI Monitor – e-mail figyelés</b></div>
+<main>
+  <section>
+    <h2>1. Összekapcsolás a BI Monitorral</h2>
+    <p class="muted">A BI Monitor alkalmazásban: <b>Beállítások → Thunderbird</b> → kapcsolja be, majd másolja ide a <b>párosító kulcsot</b>. A kapcsolat csak ezen a gépen belül működik (127.0.0.1).</p>
+    <div class="row">
+      <label>Párosító kulcs<input class="input mono" id="key" type="password" autocomplete="off" spellcheck="false" placeholder="a BI Monitorból másolt kulcs"></label>
+      <label class="narrow">Port<input class="input mono" id="port" type="number" min="1024" max="65535"></label>
+    </div>
+    <div class="row">
+      <button class="btn" id="test">Kapcsolat tesztelése</button>
+      <span id="testOut" class="small"></span>
+    </div>
+  </section>
+  <section>
+    <h2>2. Figyelt mappák</h2>
+    <p class="muted">Ezekben a mappákban keresi a riport-e-maileket (az elmúlt 40 napban). Alapból minden fiók <b>Elküldött</b> mappája.</p>
+    <label class="check"><input type="checkbox" id="defFolders"> Minden „Elküldött” mappa (alapértelmezés)</label>
+    <div id="folders" class="folders"></div>
+  </section>
+  <section>
+    <h2>3. Működés</h2>
+    <div class="row">
+      <label class="narrow">Keresés gyakorisága (perc)<input class="input" id="interval" type="number" min="1" max="60"></label>
+    </div>
+    <label class="check"><input type="checkbox" id="notify"> Thunderbird-értesítés is, ha egy e-mail kimaradt <span class="muted">(a BI Monitor Windows-értesítése mellett)</span></label>
+  </section>
+  <div class="row save">
+    <button class="btn primary" id="save">Mentés</button>
+    <span id="saveOut" class="small"></span>
+  </div>
+</main>
+<script src="lib.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

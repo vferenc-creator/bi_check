@@ -506,15 +506,19 @@ function itemRow(r, cols) {
         !it.notify || ((S.settings && S.settings.overrides || {})[it.id] || {}).mute || (r.team && r.team.muted) ? h("span", { title: "Nem kér értesítést erről az elemről" }, icon("bellOff", "mute-ic")) : null,
         r.team && r.team.recent ? h("span", { class: "new-tag", title: r.team.recent.by + " – " + fmtDateTime(r.team.recent.at) }, { added: "új", modified: "módosítva", restored: "visszaállítva" }[r.team.recent.kind] || "változott") : null),
       r.team && r.team.lock && !r.team.lock.mine ? h("div", { class: "lock-line", title: r.team.lock.holder }, icon("lock"), "Szerkeszti: " + r.team.lock.name + (r.team.lock.expired ? " (lejárt zár)" : "")) : null),
-    cols.path ? h("td", {}, h("div", { class: "path", title: st.file ? st.file.path : it.path }, "‎" + (st.file ? st.file.path : (st.resolved || it.path)))) : null,
+    cols.path ? h("td", {}, it.kind === "email"
+      ? h("div", { class: "path mailpath", title: "E-mail tárgy: " + it.mail.subject + (it.mail.folder ? " · mappa: " + it.mail.folder : "") }, icon("mail"), " " + it.mail.subject + (it.mail.folder ? " · " + it.mail.folder : ""))
+      : h("div", { class: "path", title: st.file ? st.file.path : it.path }, "‎" + (st.file ? st.file.path : (st.resolved || it.path)))) : null,
     // "Munkanapokon" already implies the Hungarian holidays (the plain variant reads "Hétköznap")
     cols.sched ? h("td", { class: "small", title: st.scheduleText || "" }, (st.scheduleText || "").replace(" (magyar munkaszüneti napokkal)", "")) : null,
     h("td", { class: "when", title: st.file ? fmtFull(st.file.modTime) : "" }, st.file ? fmtDateTime(st.file.modTime) : h("span", { class: "muted" }, "–"),
-      st.file ? h("div", { class: "small muted" }, fmtSize(st.file.size)) : null),
+      st.file && it.kind !== "email" ? h("div", { class: "small muted" }, fmtSize(st.file.size)) : null),
     h("td", { class: "when" }, parseT(st.next) ? fmtDateTime(st.next) : "–"),
     h("td", { class: "acts" },
       h("button", { class: "btn sm icon ghost", title: "Ellenőrzés most", onclick: e => { e.stopPropagation(); checkNow(it.id); } }, icon("refresh")),
-      h("button", { class: "btn sm icon ghost", title: "Mappa megnyitása", onclick: e => { e.stopPropagation(); openPath(it.id, "folder"); } }, icon("folder")),
+      it.kind === "email"
+        ? h("button", { class: "btn sm icon ghost", title: "Az utolsó e-mail megnyitása a Thunderbirdben", onclick: e => { e.stopPropagation(); openPath(it.id, "file"); } }, icon("mail"))
+        : h("button", { class: "btn sm icon ghost", title: "Mappa megnyitása", onclick: e => { e.stopPropagation(); openPath(it.id, "folder"); } }, icon("folder")),
       h("button", { class: "btn sm icon ghost", title: "Továbbiak", onclick: e => { e.stopPropagation(); itemMenu(e.currentTarget, r); } }, icon("dots"))),
   );
   return tr;
@@ -551,8 +555,9 @@ function itemMenu(anchor, r) {
     typeof ackItem === "function" && r.state.status && ["missing", "unreachable", "suspicious", "late"].includes(r.state.status) && !r.state.acked
       ? { label: "Nyugtázás (ne szóljon újra)", icon: "ack", run: () => ackItem(it.id, true) } : null,
     null,
-    { label: "Fájl megnyitása", icon: "open", run: () => openPath(it.id, "file") },
-    { label: "Mappa megnyitása", icon: "folder", run: () => openPath(it.id, "folder") },
+    it.kind === "email" && { label: "Utolsó e-mail megnyitása a Thunderbirdben", icon: "mail", run: () => openPath(it.id, "file") },
+    it.kind !== "email" && { label: "Fájl megnyitása", icon: "open", run: () => openPath(it.id, "file") },
+    it.kind !== "email" && { label: "Mappa megnyitása", icon: "folder", run: () => openPath(it.id, "folder") },
     !shared && null,
     !shared && { label: teamOn() ? "Lomtárba helyezés" : "Törlés", icon: "trash", danger: true, run: () => { if (teamCanEdit()) deleteItem(it); } },
   ].filter(x => x !== false));
@@ -642,8 +647,10 @@ function renderDrawer() {
     h("div", { class: "d-actions" },
       h("button", { class: "btn sm primary", onclick: () => checkNow(it.id) }, icon("refresh"), "Ellenőrzés most"),
       !shared ? h("button", { class: "btn sm", onclick: () => openEditor(it) }, icon(r.team && r.team.lock && !r.team.lock.mine ? "lock" : "edit"), r.team && r.team.lock && !r.team.lock.mine ? "Megtekintés" : "Szerkesztés") : null,
-      h("button", { class: "btn sm", onclick: () => openPath(it.id, "file"), disabled: !st.file }, icon("open"), "Fájl"),
-      h("button", { class: "btn sm", onclick: () => openPath(it.id, "folder") }, icon("folder"), "Mappa"),
+      it.kind === "email"
+        ? h("button", { class: "btn sm", onclick: () => openPath(it.id, "file"), disabled: !st.file, title: "Az utolsó e-mail megnyitása a Thunderbirdben" }, icon("mail"), "Thunderbird")
+        : [h("button", { class: "btn sm", onclick: () => openPath(it.id, "file"), disabled: !st.file }, icon("open"), "Fájl"),
+          h("button", { class: "btn sm", onclick: () => openPath(it.id, "folder") }, icon("folder"), "Mappa")],
       h("button", { class: "btn sm icon", title: "Továbbiak", onclick: e => { e.stopPropagation(); itemMenu(e.currentTarget, r); } }, icon("dots")),
     )));
   const body = h("div", { class: "d-body" });
@@ -651,27 +658,43 @@ function renderDrawer() {
   body.append(h("div", { class: "reason st-" + st.status }, st.reason || "Még nem volt ellenőrzés."));
   const kv = h("dl", { class: "kv" });
   const add = (k, v, cls) => { if (v === null || v === undefined || v === "") return; kv.append(h("dt", {}, k), h("dd", { class: cls || "" }, v)); };
-  add("Figyelt útvonal", it.path, "mono selectable");
-  if (st.resolved && st.resolved !== it.path) add("Vizsgált", st.resolved, "mono selectable");
-  if (st.file) add("Talált fájl", st.file.path, "mono selectable");
+  const mail = it.kind === "email";
+  if (mail) {
+    add("Figyelt e-mail tárgy", it.mail.subject, "selectable");
+    add("Mappa", it.mail.folder || "minden figyelt mappa");
+    add("Feladó / címzett", it.mail.party);
+    if (st.file) { add("Talált e-mail", st.file.name, "selectable"); add("Helye", st.file.path); }
+  } else {
+    add("Figyelt útvonal", it.path, "mono selectable");
+    if (st.resolved && st.resolved !== it.path) add("Vizsgált", st.resolved, "mono selectable");
+    if (st.file) add("Talált fájl", st.file.path, "mono selectable");
+  }
   add("Ütemezés", st.scheduleText);
   add("Üres ablak", it.gap && it.gap.enabled ? "naponta " + it.gap.from + "–" + it.gap.to : null);
   if (st.scheduleError) add("Ütemezési hiba", st.scheduleError);
   add("Elvárt időpont", parseT(st.expected) ? fmtDateTime(st.expected) : null);
   add("Határidő", parseT(st.deadline) ? fmtDateTime(st.deadline) + " (türelmi idő: " + it.graceMinutes + " perc)" : null);
   add("Következő elvárt", parseT(st.next) ? fmtDateTime(st.next) : null);
-  if (st.file) {
+  if (st.file && mail) add("Elküldve", fmtFull(st.file.modTime) + " (" + relTime(st.file.modTime) + ")");
+  if (st.file && !mail) {
     add("Utolsó módosítás", fmtFull(st.file.modTime) + " (" + relTime(st.file.modTime) + ")");
     add("Méret", fmtSize(st.file.size) + " (" + st.file.size.toLocaleString("hu-HU") + " bájt)");
   }
-  if (st.matches > 1) add("Illeszkedő fájlok", st.matches + " db");
+  if (st.matches > 1) add(mail ? "Illeszkedő e-mailek" : "Illeszkedő fájlok", st.matches + " db");
   add("Utolsó ellenőrzés", parseT(st.lastCheck) ? fmtDateTime(st.lastCheck, true) + " · " + st.tookMs + " ms" : "még nem volt");
   add("Állapot óta", parseT(st.since) ? fmtDateTime(st.since) : null);
   add("Értesítés", it.notify ? "bekapcsolva" : "kikapcsolva");
   if (it.source) add("Forrás", "Közös lista: " + it.source);
   add("Megjegyzés", it.note);
   body.append(kv);
-  if (st.candidates && st.candidates.length > 1) {
+  if (mail && st.candidates && st.candidates.length) {
+    body.append(h("div", { class: "section-t" }, "Legutóbbi illeszkedő e-mailek"));
+    const ev = h("div", { class: "events" });
+    for (const c of st.candidates) ev.append(h("div", { class: "event" }, h("span", { class: "t" }, fmtDateTime(c.modTime)),
+      h("span", { class: "grow selectable" }, c.name, h("span", { class: "muted" }, " · " + c.path)),
+      h("button", { class: "btn sm ghost", title: "Megnyitás a Thunderbirdben", onclick: () => api("openMail", { id: it.id, subject: c.name, date: c.modTime, path: c.path }).catch(fail) }, icon("mail"))));
+    body.append(ev);
+  } else if (st.candidates && st.candidates.length > 1) {
     body.append(h("div", { class: "section-t" }, "Legfrissebb illeszkedő fájlok"));
     const ev = h("div", { class: "events" });
     for (const c of st.candidates) ev.append(h("div", { class: "event" }, h("span", { class: "t" }, fmtDateTime(c.modTime)), h("span", { class: "mono grow selectable" }, c.name), h("span", { class: "muted" }, fmtSize(c.size))));
@@ -691,13 +714,54 @@ const SCHED_TYPES = [
   ["workdays", "Munkanapokon"], ["monthly", "Havonta"], ["cron", "Cron"],
 ];
 
-async function openEditor(item) {
+// Turns a picked e-mail ("watch e-mails like this" in Thunderbird) into a new
+// e-mail item: the date in the subject becomes a token, the send time the
+// expected time.
+function suggestFromMail(it, d) {
+  const sent = parseT(d.date) || new Date();
+  const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const forms = [
+    [/(20\d{2})\.(\d{2})\.(\d{2})/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyy.MM.dd"],
+    [/(20\d{2})-(\d{2})-(\d{2})/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyy-MM-dd"],
+    [/(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyyMMdd"],
+    [/(\d{2})\.(\d{2})\.(20\d{2})/, m => new Date(+m[3], +m[2] - 1, +m[1]), "dd.MM.yyyy"],
+    [/(20\d{2})\.(\d{2})(?![.\d])/, m => new Date(+m[1], +m[2] - 1, 1), "yyyy.MM"],
+  ];
+  let subject = d.subject, name = d.subject;
+  for (const [re, toDate, fmt] of forms) {
+    const m = subject.match(re);
+    if (!m) continue;
+    const dd = toDate(m);
+    let off = "";
+    if (fmt !== "yyyy.MM") {
+      const diff = Math.round((day(dd) - day(sent)) / 86400000);
+      if (diff !== 0 && Math.abs(diff) <= 7) off = ":" + (diff > 0 ? "+" : "") + diff + "d";
+      else if (diff !== 0) break; // an unrelated date – keep it literal
+    } else {
+      const diff = (dd.getFullYear() - sent.getFullYear()) * 12 + dd.getMonth() - sent.getMonth();
+      if (diff) off = ":" + (diff > 0 ? "+" : "") + diff + "M";
+    }
+    subject = subject.replace(re, "{" + fmt + off + "}");
+    name = name.replace(re, "").replace(/[\s\-–_:,.]+$/, "").replace(/^[\s\-–_:,.]+/, "").replace(/\s{2,}/g, " ");
+    break;
+  }
+  it.kind = "email";
+  it.mail = { subject, folder: d.folder || "", party: "" };
+  it.name = name || d.subject;
+  const hh = String(sent.getHours()).padStart(2, "0"), mm = String(Math.floor(sent.getMinutes() / 5) * 5).padStart(2, "0");
+  it.schedule = { type: "daily", times: [hh + ":" + mm] };
+  it.note = "Thunderbirdből: „" + d.subject + "” (" + fmtDateTime(d.date) + (d.account ? ", " + d.account + " / " + d.folder : "") + ")";
+}
+
+async function openEditor(item, draft) {
   let it;
   if (item) it = JSON.parse(JSON.stringify(item));
   else {
     try { it = await api("newItem"); } catch (e) { return fail(e); }
     if (S.group && S.group !== "Csoport nélkül") it.group = S.group;
+    if (draft) suggestFromMail(it, draft);
   }
+  if (!it.mail) it.mail = {};
   try { S.groups = await api("groups"); } catch (_) { /* ignore */ }
   const isNew = !it.id;
   const team = teamOn();
@@ -786,14 +850,26 @@ async function openEditor(item) {
   const modeOf = p => { const n = splitPath(p).name; return n === "*" ? "folder" : /[*?{]/.test(n) ? "pattern" : "file"; };
   // A name fragment without wildcard means "starts with": sales_ → sales_*
   const effName = v => { v = (v || "").trim(); return !v ? "*" : /[*?]/.test(v) ? v : v + "*"; };
-  let pathMode = it.path ? modeOf(it.path) : "file";
+  let pathMode = it.kind === "email" ? "email" : it.path ? modeOf(it.path) : "file";
   const pathBox = h("div");
   const dirInput = h("input", { class: "input mono grow", placeholder: "\\\\EFS-FSRHQ\\Groups\\BI\\export", spellcheck: false });
   const nameInput = h("input", { class: "input mono", placeholder: "pl. sales_   vagy   riport_{yyyyMMdd}*.xlsx", spellcheck: false });
+  // e-mail mode (Thunderbird add-on)
+  const subjInput = h("input", { class: "input", placeholder: "pl. Napi értékesítési riport {yyyy.MM.dd}", spellcheck: false });
+  const mfolderInput = h("input", { class: "input", placeholder: "pl. Elküldött  (üres: minden figyelt mappa)", spellcheck: false });
+  const partyInput = h("input", { class: "input", placeholder: "pl. vezetes@energofish.hu", spellcheck: false });
+  const composeMail = () => {
+    it.mail = { subject: subjInput.value.trim(), folder: mfolderInput.value.trim(), party: partyInput.value.trim() };
+    onChange("path");
+  };
+  for (const inp of [subjInput, mfolderInput, partyInput]) inp.addEventListener("input", composeMail);
   const fillFields = () => {
     const sp0 = splitPath(it.path);
-    dirInput.value = pathMode === "file" ? "" : sp0.dir;
+    dirInput.value = pathMode === "file" || pathMode === "email" ? "" : sp0.dir;
     nameInput.value = pathMode === "pattern" ? sp0.name : "";
+    subjInput.value = it.mail.subject || "";
+    mfolderInput.value = it.mail.folder || "";
+    partyInput.value = it.mail.party || "";
   };
   const compose = () => {
     if (pathMode === "file") return;
@@ -828,6 +904,21 @@ async function openEditor(item) {
   }
   function setPathMode(m) {
     if (m === pathMode) return;
+    if (pathMode === "email") {
+      it.kind = "";
+      it.path = "";
+      pathInput.value = dirInput.value = nameInput.value = "";
+    }
+    if (m === "email") {
+      pathMode = m;
+      it.kind = "email";
+      fillFields();
+      composeMail();
+      suggestions = [];
+      renderPathFields();
+      setTimeout(() => subjInput.focus(), 0);
+      return;
+    }
     const cur = splitPath(it.path);
     if (pathMode === "file") {
       dirInput.value = it.path ? cur.dir : "";
@@ -846,10 +937,17 @@ async function openEditor(item) {
     renderPathFields();
   }
   function renderPathFields() {
-    const modes = [["file", "Fájl"], ["pattern", "Fájlnév minta"], ["folder", "Mappa"]];
+    const modes = [["file", "Fájl"], ["pattern", "Fájlnév minta"], ["folder", "Mappa"], ["email", "E-mail"]];
     clear(pathBox).append(h("div", { class: "seg", style: { marginBottom: "10px" } },
-      modes.map(([v, l]) => h("button", { class: pathMode === v ? "on" : "", onclick: () => setPathMode(v) }, l))));
-    if (pathMode === "file") {
+      modes.map(([v, l]) => h("button", { class: pathMode === v ? "on" : "", onclick: () => setPathMode(v) }, v === "email" ? icon("mail") : null, l))));
+    const sus = document.querySelector(".modal .sus-fs");
+    if (sus) sus.style.display = pathMode === "email" ? "none" : "";
+    if (pathMode === "email") {
+      pathBox.append(h("label", { class: "field" }, "E-mail tárgya (minta)", subjInput),
+        h("div", { class: "grid2", style: { marginTop: "10px" } },
+          h("label", { class: "field" }, "Mappa (nem kötelező)", mfolderInput),
+          h("label", { class: "field" }, "Feladó vagy címzett tartalmazza (nem kötelező)", partyInput)));
+    } else if (pathMode === "file") {
       pathBox.append(h("div", { class: "row" }, pathInput, h("button", { class: "btn", onclick: browse }, icon("folder"), "Tallózás…")));
     } else {
       pathBox.append(h("label", { class: "field" }, "Mappa",
@@ -880,7 +978,7 @@ async function openEditor(item) {
 
   function renderPathHelp() {
     clear(pathHelp);
-    const hasTok = /\{[^}]+\}/.test(it.path || "");
+    const hasTok = /\{[^}]+\}/.test((pathMode === "email" ? it.mail.subject : it.path) || "");
     if (suggestions.length) {
       pathHelp.append(h("div", { class: "suggest" }, "A fájlnév dátumot tartalmaz. Mintaként figyelje? ",
         suggestions.map(sg => h("button", { class: "btn sm", style: { margin: "4px 4px 0 0" }, onclick: () => { it.path = sg; pathInput.value = sg; suggestions = []; pathMode = modeOf(sg); fillFields(); renderPathFields(); onChange("path"); } }, h("code", {}, sg.split(/[\\/]/).pop())))));
@@ -892,7 +990,14 @@ async function openEditor(item) {
           h("button", { class: it.tokenMode !== "any" ? "on" : "", onclick: () => { it.tokenMode = ""; renderPathHelp(); onChange(); } }, "az elvárt nap dátuma"),
           h("button", { class: it.tokenMode === "any" ? "on" : "", onclick: () => { it.tokenMode = "any"; renderPathHelp(); onChange(); } }, "bármilyen dátum (legfrissebb)"))));
     }
-    if (pathMode === "folder") {
+    if (pathMode === "email") {
+      const tbOn = S.settings && S.settings.thunderbird && S.settings.thunderbird.enabled;
+      pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
+        "A BI Monitor Thunderbird-bővítménye a figyelt mappákban (alapból: Elküldött) keresi az ilyen tárgyú leveleket; a levél dátuma számít érkezésnek. ",
+        "Ha nincs benne ", h("code", {}, "*"), ", a megadott szöveget ", h("b", {}, "tartalmazó"), " tárgyak számítanak. Dátum: ", h("code", {}, "{yyyy.MM.dd}"), ", ", h("code", {}, "{yyyyMMdd}"),
+        ", eltolással ", h("code", {}, "{yyyy.MM.dd:-1d}"), ". A kis- és nagybetű nem számít."),
+        tbOn ? "" : h("div", { class: "errbox", style: { marginTop: "8px" } }, "Ezen a gépen nincs bekapcsolva a Thunderbird-kapcsolat – itt az e-mail „Ismeretlen” marad. Bekapcsolás: Beállítások → Thunderbird."));
+    } else if (pathMode === "folder") {
       pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
         "A mappába érkező bármelyik fájl számít – a legfrissebb módosítási ideje dönt. Almappákat nem néz; a Thumbs.db, desktop.ini és a ", h("code", {}, "~$…"), " Office ideiglenes fájlok nem számítanak."));
     } else if (pathMode === "pattern") {
@@ -1091,7 +1196,7 @@ async function openEditor(item) {
             field("Felelős", text(it, "owner", { placeholder: "pl. Kiss Anna" })),
             field("Megjegyzés", text(it, "note", { placeholder: "pl. KNIME workflow neve, teendő hiba esetén" }))),
           h("datalist", { id: "ed-groups" }, S.groups.map(g => h("option", { value: g })))),
-        h("fieldset", {}, h("legend", {}, "Útvonal"),
+        h("fieldset", {}, h("legend", {}, "Mit figyel?"),
           pathBox,
           pathHelp),
         h("fieldset", {}, h("legend", {}, "Ütemezés"), schedBox),
@@ -1100,7 +1205,7 @@ async function openEditor(item) {
             field("Türelmi idő (perc)", number(it, "graceMinutes", { min: 0 }), "ennyi ideig „Késik”, utána „Hiányzik”"),
             field("Korai érkezés elfogadása (perc)", number(it, "earlyMinutes", { min: 0 }), "az elvárt időpont előtt ennyivel érkező fájl is jó")),
           gapEditor()),
-        h("fieldset", {}, h("legend", {}, "Gyanús fájl"),
+        h("fieldset", { class: "sus-fs" }, h("legend", {}, "Gyanús fájl"),
           h("div", { class: "grid3" },
             h("div", { class: "field" }, "Üres fájl", h("div", { class: "ctrl-h" }, sw(sus, "zeroBytes", "0 bájtos fájl gyanús"))),
             field("Minimális méret (KB)", h("input", { class: "input narrow", type: "number", min: 0, value: minKB.v, oninput: e => { sus.minBytes = (parseInt(e.target.value, 10) || 0) * 1024; } })),
@@ -1110,9 +1215,9 @@ async function openEditor(item) {
         errBox,
       ),
       h("div", { class: "side" }, preview,
-        h("div", { class: "section-t" }, "Útvonal teszt"),
-        h("div", { class: "small muted", style: { marginBottom: "8px" } }, "Megnézi a fájlt most, és megmutatja, milyen állapot lenne."),
-        h("button", { class: "btn sm", onclick: runTest }, icon("test"), "Útvonal tesztelése"),
+        h("div", { class: "section-t" }, "Kipróbálás"),
+        h("div", { class: "small muted", style: { marginBottom: "8px" } }, "Megnézi most (fájlt, mappát vagy e-mailt), és megmutatja, milyen állapot lenne."),
+        h("button", { class: "btn sm", onclick: runTest }, icon("test"), "Kipróbálás most"),
         h("div", { style: { marginTop: "10px" } }, testBox)),
     )),
     h("div", { class: "m-foot" },
@@ -1146,6 +1251,7 @@ async function openEditor(item) {
       case "útvonal": return x.path; case "dátum token": return x.tokenMode === "any" ? "bármilyen dátum" : "elvárt nap";
       case "türelmi idő": return x.graceMinutes + " perc"; case "korai tolerancia": return x.earlyMinutes + " perc";
       case "figyelés be/ki": return x.enabled ? "bekapcsolva" : "kikapcsolva";
+      case "e-mail figyelés": return x.kind === "email" ? "tárgy: " + (x.mail.subject || "") + (x.mail.folder ? ", mappa: " + x.mail.folder : "") + (x.mail.party ? ", partner: " + x.mail.party : "") : "nincs (fájl)";
       case "megengedett hiány": return x.gap && x.gap.enabled ? "naponta " + x.gap.from + "–" + x.gap.to : "nincs";
       case "gyanússági szabályok": return (x.suspicious.zeroBytes ? "0 bájt gyanús, " : "") + "min. " + Math.round((x.suspicious.minBytes || 0) / 1024) + " KB, csökkenés " + (x.suspicious.dropPercent || 0) + "%";
       case "ütemezés": return JSON.stringify(x.schedule);
@@ -1246,12 +1352,12 @@ function drawHistory(box, d, it) {
       Object.entries({ ok: "időben", late: "késve", missed: "kimaradt", unknown: "nem mért" }).map(([k, l]) =>
         h("span", { class: "row", style: { gap: "4px" } }, h("span", { style: { width: "10px", height: "10px", borderRadius: "2px", background: CELL_C[k] } }), l))));
   }
-  if (d.sizes.length > 1) {
+  if (d.sizes.length > 1 && it.kind !== "email") {
     box.append(h("div", { class: "section-t" }, "Fájlméret alakulása"));
     box.append(sparkline(d.sizes));
   }
   const evs = [];
-  for (const a of d.arrivals) evs.push({ t: a.modTime, el: h("span", {}, "Új fájl: ", h("span", { class: "mono" }, a.filePath.split(/[\\/]/).pop()), " · " + fmtSize(a.size) + (a.delaySec !== undefined && a.delaySec !== null && a.delaySec > 0 ? " · +" + fmtDur(a.delaySec) : "")) });
+  for (const a of d.arrivals) evs.push(it.kind === "email" ? { t: a.modTime, el: h("span", {}, "Kiment e-mail (" + a.filePath + ")" + (a.delaySec > 0 ? " · +" + fmtDur(a.delaySec) : "")) } : { t: a.modTime, el: h("span", {}, "Új fájl: ", h("span", { class: "mono" }, a.filePath.split(/[\\/]/).pop()), " · " + fmtSize(a.size) + (a.delaySec !== undefined && a.delaySec !== null && a.delaySec > 0 ? " · +" + fmtDur(a.delaySec) : "")) });
   for (const tr of d.transitions) evs.push({ t: tr.at, el: h("span", {}, pill(tr.from, STATUS[tr.from]), " → ", pill(tr.to, STATUS[tr.to]), h("div", { class: "small muted", style: { marginTop: "3px" } }, tr.reason)) });
   evs.sort((a, b) => new Date(b.t) - new Date(a.t));
   box.append(h("div", { class: "section-t" }, "Események"));
@@ -1606,6 +1712,10 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
     drawLegacyLists(legacy);
   }
 
+  const tbCard = h("div", { class: "card", id: "tbCard" });
+  grid.append(tbCard);
+  drawThunderbird(tbCard, row, sw);
+
   grid.append(h("div", { class: "card" },
     h("div", { class: "card-h" }, icon("folder"), h("h3", {}, "Adatok")),
     h("div", { class: "card-b" },
@@ -1616,9 +1726,86 @@ function settingsExtra(grid, s, row, sw, num, timeIn) {
     )));
 }
 
+// ---- Settings: Thunderbird add-on -------------------------------------------
+const TB_XPI = "https://github.com/vferenc-creator/bi_check/releases/latest/download/BIMonitor-Thunderbird.xpi";
+
+function tbConnText(st) {
+  const info = st.info || {};
+  const last = parseT(info.lastContact);
+  const live = last && Date.now() - last < 120000;
+  if (!st.enabled) return { live: false, cls: "st-disabled", label: "kikapcsolva", text: "" };
+  if (st.error) return { live: false, cls: "st-missing", label: "hiba", text: st.error };
+  if (!last) return { live: false, cls: "st-unreachable", label: "nincs kapcsolat", text: "A bővítmény még nem jelentkezett. Telepítse, és illessze be a párosító kulcsot (lent)." };
+  const parts = [];
+  if (info.tbVersion) parts.push("Thunderbird " + info.tbVersion);
+  if (info.extVersion) parts.push("bővítmény " + info.extVersion);
+  if (parseT(info.lastReport)) parts.push("utolsó keresés: " + fmtDateTime(info.lastReport, true));
+  parts.push((info.folders || []).length + " figyelt mappa");
+  parts.push(st.rules + " e-mail figyelés");
+  let text = parts.join(" · ");
+  if ((info.errors || []).length) text += " · hiba: " + info.errors.join("; ");
+  return live ? { live, cls: "st-ok", label: "kapcsolódva", text } : { live, cls: "st-unreachable", label: "nem elérhető", text: "Utoljára " + fmtDateTime(info.lastContact, true) + " jelentkezett – fut a Thunderbird? " + text };
+}
+
+function updateTbConn(st) {
+  const el = $("#tbConn");
+  if (!el) return;
+  const c = tbConnText(st);
+  clear(el).append(h("span", { class: "pill " + c.cls }, h("span", { class: "dot" }), c.label), c.text ? h("span", { class: "small muted" }, c.text) : null);
+}
+
+async function copyText(text, input) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (_) { if (input) { input.select(); document.execCommand("copy"); } }
+  toast("Kimásolva a vágólapra.");
+}
+
+async function drawThunderbird(card, row, sw) {
+  row = row || ((title, hint, ctrl) => h("div", { class: "setting-row" }, h("div", { class: "lbl" }, h("b", {}, title), hint ? h("span", {}, hint) : null), ctrl));
+  let st;
+  try { st = await api("tbStatus"); } catch (e) { return fail(e); }
+  const d = S.tbDraft = { enabled: st.enabled, port: st.port, staleMin: st.staleMin };
+  S.tbDraftOrig = JSON.stringify(d);
+  const num = (key, min, max) => h("input", { class: "input narrow", type: "number", min, max, value: d[key], oninput: e => { d[key] = parseInt(e.target.value, 10) || 0; } });
+  const keyIn = h("input", { class: "input mono grow", readonly: true, value: st.key || "", onclick: e => e.target.select() });
+  const body = h("div", { class: "card-b" },
+    h("p", { class: "small muted", style: { marginTop: 0, lineHeight: 1.5 } },
+      "Az időzítve kiküldött riport-e-mailek figyelése: a BI Monitor Thunderbird-bővítménye ezen a gépen megnézi a levelezésben (alapból az Elküldött mappákban), hogy a várt tárgyú e-mail kiment-e. ",
+      "Az e-mailes elemek a többi elemhez hasonlóan ütemezhetők és értesítenek (Új elem → E-mail)."),
+    row("Thunderbird-kapcsolat", "Csak ezen a gépen érhető el (127.0.0.1). Mentés után lép életbe.",
+      h("label", { class: "switch" }, h("input", { type: "checkbox", checked: d.enabled, onchange: e => { d.enabled = e.target.checked; } }))));
+  if (st.enabled) {
+    body.append(h("div", { id: "tbConn", class: "row wrap", style: { gap: "8px", padding: "10px 0", borderBottom: "1px dashed var(--border)" } }));
+    body.append(h("div", { class: "setting-row stack" },
+      h("div", { class: "lbl" }, h("b", {}, "Párosító kulcs"), h("span", {}, "Ezt kell beírni a Thunderbird-bővítmény beállításaiban. Új kulcsnál a bővítményben is cserélni kell.")),
+      h("div", { class: "row" }, keyIn,
+        h("button", { class: "btn sm", onclick: () => copyText(st.key, keyIn) }, icon("copy"), "Másolás"),
+        h("button", { class: "btn sm ghost", onclick: async () => {
+          if (!(await confirmBox("Új párosító kulcs", "A bővítmény a régi kulccsal nem fog tudni kapcsolódni – a Thunderbirdben is be kell írni az újat.", "Új kulcs"))) return;
+          try { await api("tbNewKey"); drawThunderbird(card); } catch (e) { fail(e); }
+        } }, "Új kulcs"))));
+    body.append(row("Helyi port", "Alapból 47231. Csak akkor változtassa, ha foglalt; a bővítményben is ugyanezt kell megadni.", num("port", 1024, 65535)));
+    body.append(row("Riasztás, ha a Thunderbird nem jelentkezik", "Perc. Ennyi idő után lesznek az e-mailes elemek „Elérhetetlen”-ek (pl. ha nem fut a Thunderbird).", num("staleMin", 2, 1440)));
+    body.append(h("div", { class: "small", style: { lineHeight: 1.6, marginTop: "10px" } },
+      h("b", {}, "Telepítés a Thunderbirdbe:"), h("br"),
+      "1. Töltse le a bővítményt: ", h("a", { href: "#", onclick: e => { e.preventDefault(); api("openURL", TB_XPI).catch(fail); } }, "BIMonitor-Thunderbird.xpi"), h("br"),
+      "2. Thunderbird → ", h("i", {}, "Kiegészítők és témák"), " → fogaskerék → ", h("i", {}, "Kiegészítő telepítése fájlból…"), h("br"),
+      "3. A bővítmény beállításaiban illessze be a párosító kulcsot, és jelölje ki a figyelt mappákat.", h("br"),
+      "4. Egy levélen jobb gomb → ", h("i", {}, "BI Monitor: figyelés erre az e-mailre…"), " – a BI Monitorban kitöltött szerkesztő nyílik meg."));
+  }
+  clear(card).append(h("div", { class: "card-h" }, icon("mail"), h("h3", {}, "Thunderbird (e-mail figyelés)")), body);
+  if (st.enabled) updateTbConn(st);
+}
+
 async function saveAll(silent) {
   const s = S.settingsDraft;
   S.settings = await api("saveSettings", s);
+  if (S.tbDraft && JSON.stringify(S.tbDraft) !== S.tbDraftOrig) {
+    await api("tbSave", S.tbDraft);
+    S.settings = (await api("bootstrap")).settings;
+    const c = $("#tbCard");
+    if (c) drawThunderbird(c);
+  }
   if (S.teamDraft && teamOn()) {
     await api("teamSettings", S.teamDraft);
     S.settings = (await api("bootstrap")).settings;
@@ -1631,6 +1818,13 @@ async function setOverride(id, patch) {
   try { await api("setOverride", Object.assign({ id }, patch)); await refresh(); } catch (e) { fail(e); }
 }
 bridge.on("toast", m => toast(m.text, m.error));
+// Thunderbird add-on: "watch e-mails like this", "show this item", status
+async function takeDraft() {
+  try { const d = await api("takeMailDraft"); if (d) { go("items"); openEditor(null, d); } } catch (e) { fail(e); }
+}
+bridge.on("mailDraft", takeDraft);
+bridge.on("showItem", id => { go("items"); openDrawer(id); });
+bridge.on("thunderbird", st => { if (typeof updateTbConn === "function") updateTbConn(st); });
 
 // ---- About view ------------------------------------------------------------
 views.about = main => {
@@ -1663,6 +1857,7 @@ async function boot() {
     applyTheme();
     if (S.boot.warning) toast(S.boot.warning, true);
     applySnapshot(await api("listItems"));
+    takeDraft();
   } catch (e) { fail(e); }
 }
 document.addEventListener("DOMContentLoaded", boot);

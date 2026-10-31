@@ -1,0 +1,16 @@
+body { background: var(--bg); }
+main { max-width: 720px; margin: 0 auto; padding: 16px; }
+section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+h2 { font-size: 14.5px; margin: 0 0 6px; }
+p { margin: 0 0 10px; line-height: 1.5; }
+.row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px; }
+.row.save { align-items: center; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); flex: 1; min-width: 220px; }
+label.narrow { flex: 0 0 160px; min-width: 0; }
+label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; color: var(--text); font-size: 13px; margin-top: 8px; }
+label.check input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.folders { margin-top: 8px; max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
+.folders .acc { font-weight: 700; margin: 8px 0 2px; }
+.folders label.check { margin: 3px 0 3px 12px; }
+.ok { color: var(--ok); }
+.bad { color: var(--missing); }

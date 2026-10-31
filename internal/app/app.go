@@ -17,6 +17,7 @@ import (
 	"bimonitor/internal/calendar"
 	"bimonitor/internal/checker"
 	"bimonitor/internal/engine"
+	"bimonitor/internal/mailwatch"
 	"bimonitor/internal/model"
 	"bimonitor/internal/notify"
 	"bimonitor/internal/store"
@@ -56,6 +57,10 @@ type App struct {
 
 	opt  Options
 	team *teamStateT
+
+	// Mail holds what the Thunderbird add-on reported; tb is its local API.
+	Mail *mailwatch.Hub
+	tb   tbState
 
 	// OnCall, if set, is invoked before every RPC (used by --selftest).
 	OnCall func(method string)
@@ -105,11 +110,13 @@ func New(p Platform, opt Options) (*App, error) {
 	s := st.Get()
 	a.cal = calendar.Default
 	a.Checker = checker.New(nil, checker.Options{Timeout: time.Duration(s.TimeoutSec) * time.Second})
+	a.Mail = mailwatch.New(nil)
 	a.Engine = engine.New(engine.Config{
-		Checker:  a.Checker,
-		Loc:      loc,
-		OnEvents: a.handleEvents,
-		OnChange: a.schedulePush,
+		Checker:   a.Checker,
+		MailCheck: a.mailCheck,
+		Loc:       loc,
+		OnEvents:  a.handleEvents,
+		OnChange:  a.schedulePush,
 		SizeHistory: func(id string) []int64 {
 			if a.History == nil {
 				return nil
@@ -123,6 +130,7 @@ func New(p Platform, opt Options) (*App, error) {
 	a.registerTransferAPI()
 	a.registerTeamAPI()
 	a.registerSharedModeAPI()
+	a.registerThunderbirdAPI()
 	return a, nil
 }
 
@@ -145,6 +153,7 @@ func (a *App) Start() {
 			a.reconfigure()
 		}
 	}()
+	a.syncThunderbird()
 	go a.Engine.Run(ctx)
 	go a.background(a.stop)
 	if s := a.Settings.Get(); s.Team.Enabled && s.Team.Folder != "" {
@@ -155,6 +164,7 @@ func (a *App) Start() {
 // Close stops background work.
 func (a *App) Close() {
 	a.stopTeam() // releases our edit locks on the share
+	a.stopThunderbird()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -180,6 +190,7 @@ func (a *App) reconfigure() {
 	a.mu.Unlock()
 	a.Checker.SetTimeout(time.Duration(s.TimeoutSec) * time.Second)
 	a.Engine.Configure(a.effectiveItems(s), cal, time.Duration(s.CheckIntervalSec)*time.Second, s.Parallelism)
+	a.syncThunderbird()
 }
 
 // Calendar returns the working-day calendar in use.

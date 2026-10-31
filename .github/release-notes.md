@@ -2,6 +2,8 @@
 
 Frissítés: kilépés a tálcaikon menüjéből → az exe cseréje → újraindítás. A beállítások (`%APPDATA%\EnergofishMonitor`) és az előzmények megmaradnak.
 
+`BIMonitor-Thunderbird.xpi` – Thunderbird-bővítmény az időzített riport-e-mailek figyeléséhez. Telepítés: Thunderbird → *Kiegészítők és témák* → fogaskerék → *Kiegészítő telepítése fájlból…*, majd a bővítmény beállításaiban a BI Monitor párosító kulcsa (*Beállítások → Thunderbird*).
+
 `BIMonitor_minta_elemek.json` – mintalista néhány tipikus figyelt elemmel (KNIME, DyntellBI, ERP export, riport). Import: *Figyelt elemek → Import*, utána az útvonalakat a saját fájljaira kell átírni.
 
 Az exe nincs digitálisan aláírva: ha a SmartScreen figyelmeztet, *További információ → Futtatás mindenképp*.

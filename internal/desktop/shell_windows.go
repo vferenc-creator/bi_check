@@ -377,5 +377,8 @@ const AutostartValueName = "EnergofishBIMonitor"
 // SetAutostart writes/removes the Run registry value.
 func (sh *Shell) SetAutostart(on bool) error { return winapi.SetAutostart(AutostartValueName, on) }
 
+// ShowWindow opens the main window (from any goroutine).
+func (sh *Shell) ShowWindow() { sh.Do(sh.openWindow) }
+
 // AutostartEnabled reports whether the Run value exists.
 func (sh *Shell) AutostartEnabled() bool { return winapi.GetAutostart(AutostartValueName) != "" }
