@@ -23,6 +23,17 @@ var brandJSON []byte
 //go:embed icon.png
 var IconPNG []byte
 
+// IconAlertPNG is the "late / error" variant (red badge with "!"), used as
+// the tray icon when something is wrong.
+//
+//go:embed icon-alert.png
+var IconAlertPNG []byte
+
+// IconLightPNG is the light variant for dark backgrounds (UI top bar).
+//
+//go:embed icon-light.png
+var IconLightPNG []byte
+
 // Brand describes the product identity.
 type Brand struct {
 	AppName    string            `json:"appName"`
@@ -46,10 +57,15 @@ func mustLoad(b []byte) Brand {
 }
 
 // Icon decodes the embedded application icon.
-func Icon() image.Image {
-	img, _, err := image.Decode(bytes.NewReader(IconPNG))
+func Icon() image.Image { return decode(IconPNG, "icon.png") }
+
+// IconAlert decodes the error variant of the icon.
+func IconAlert() image.Image { return decode(IconAlertPNG, "icon-alert.png") }
+
+func decode(b []byte, name string) image.Image {
+	img, _, err := image.Decode(bytes.NewReader(b))
 	if err != nil {
-		panic("branding/icon.png: " + err.Error())
+		panic("branding/" + name + ": " + err.Error())
 	}
 	return img
 }

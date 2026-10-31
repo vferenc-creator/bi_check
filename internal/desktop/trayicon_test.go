@@ -14,9 +14,15 @@ func TestTrayImageBadge(t *testing.T) {
 		if img.Bounds().Dx() != 32 {
 			t.Fatal("size")
 		}
-		c := img.NRGBAAt(26, 26) // inside the badge
-		if sev == model.SevError && !(c.R > 180 && c.G < 120) {
-			t.Errorf("error badge should be red, got %v", c)
+		c := img.NRGBAAt(25, 7) // inside the status dot
+		if sev == model.SevError {
+			// the designed error icon: red badge in the upper right corner
+			if e := img.NRGBAAt(27, 4); !(e.R > 150 && e.G < 110) {
+				t.Errorf("error icon should have the red badge, got %v", e)
+			}
+		}
+		if sev == model.SevWarning && !(c.R > 180 && c.G > 120 && c.B < 80) {
+			t.Errorf("warning dot should be amber, got %v", c)
 		}
 		if sev == model.SevOK && !(c.G > c.R) {
 			t.Errorf("ok badge should be green, got %v", c)

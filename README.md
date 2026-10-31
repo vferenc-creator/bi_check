@@ -405,7 +405,6 @@ internal/winapi/     Win32 hívások
 web/                 index.html, styles.css, app.js (go:embed-del az exe-be kerül)
 thunderbird/         a Thunderbird-bővítmény (MailExtension): background.js, popup, options, lib.js + tesztek
 tools/genres/        ikon, manifest, verzióinfó → .syso (a brandingből)
-tools/genicon/       az ikon vektoros újrarajzolása
 ```
 
 ### Build
@@ -439,7 +438,11 @@ go run ./cmd/devserver -data ./devdata -seed    # 30 napnyi kitalált előzménn
 ```
 
 ### Arculat cseréje
-- **Ikon:** cserélje le a `branding/icon.png` fájlt (négyzetes, legalább 256×256 px, átlátszó háttér is lehet), majd buildeljen újra. Ebből készül az exe ikonja, az ablak és a tálca ikonja (a tálcán állapotjelző pöttyel), valamint a felület logója. A jelenlegi ikon az Energofish logó vektoros újrarajzolása (`go run ./tools/genicon`); ha megvan az eredeti grafika, egyszerűen írja felül vele.
+- **Ikon:** a `branding/` mappában (négyzetes PNG, legalább 256×256 px, átlátszó sarkokkal), utána újra kell buildelni:
+  - `icon.png` – az alkalmazás ikonja (sötét lapka): exe, ablak, tálca (rendben: zöld, figyelmeztetés: borostyán pötty), a Thunderbird-bővítmény ikonja és a világos felületek logója;
+  - `icon-alert.png` – hibaállapot (piros jelvény „!”-lel): a tálcaikon, ha valami hiányzik vagy elérhetetlen;
+  - `icon-light.png` – világos lapka: a felület sötét felső sávjában és sötét témában.
+  A jelenlegi ikonok az Energofish „pásztázó radar” logó (design spec, `monitor-sotet`, `monitor-keses-sotet`, `monitor-vilagos`). A Thunderbird-bővítmény ikonjai: `thunderbird/icons/`.
 - **Színek, név:** `branding/brand.json`. A felület minden színe ebből CSS-változóként kerül be, a CSS-ben nincs beégetett márkaszín.
 
 ### Továbbfejlesztési tippek

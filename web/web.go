@@ -24,9 +24,11 @@ var appJS string
 func Page() string {
 	b := branding.Current
 	icon := "data:image/png;base64," + base64.StdEncoding.EncodeToString(branding.IconPNG)
+	iconLight := "data:image/png;base64," + base64.StdEncoding.EncodeToString(branding.IconLightPNG)
 	r := strings.NewReplacer(
 		"{{APPNAME}}", htmlEscape(b.AppName),
 		"{{COMPANY}}", htmlEscape(b.Company),
+		"{{ICON_LIGHT}}", iconLight,
 		"{{ICON}}", icon,
 		"{{BRANDVARS}}", b.CSSVariables(),
 		"{{STYLES}}", stylesCSS,

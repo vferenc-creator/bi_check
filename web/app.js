@@ -299,6 +299,9 @@ const S = {
 };
 const views = {};
 
+// The dark logo on light surfaces, the light one on dark surfaces.
+function logoForTheme() { return document.documentElement.dataset.theme === "dark" ? window.__ICON_LIGHT : window.__ICON; }
+
 function applyTheme() {
   const t = (S.settings && S.settings.theme) || "system";
   const dark = t === "dark" || (t === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -448,7 +451,7 @@ views.items = main => {
 
   if (!S.items.length) {
     main.append(h("div", { class: "card" }, h("div", { class: "empty" },
-      h("img", { src: window.__ICON, alt: "" }),
+      h("img", { src: logoForTheme(), alt: "" }),
       h("h2", {}, "Még nincs figyelt elem"),
       h("p", {}, "Vegye fel az első outputot: egy konkrét fájlt (pl. \\\\EFS-FSRHQ\\Groups\\BI\\export.xlsx) vagy egy mintát (pl. sales_*.parquet, riport_{yyyyMMdd}.xlsx), és adja meg, mikor kell megérkeznie."),
       h("div", { class: "row", style: { justifyContent: "center" } },
@@ -1867,7 +1870,7 @@ views.about = main => {
   main.append(h("div", { class: "page-head" }, h("h1", {}, "Névjegy")));
   main.append(h("div", { class: "card", style: { maxWidth: "640px" } }, h("div", { class: "card-b" },
     h("div", { class: "row", style: { gap: "16px", marginBottom: "14px" } },
-      h("img", { src: window.__ICON, style: { width: "64px", height: "64px" } }),
+      h("img", { src: logoForTheme(), style: { width: "64px", height: "64px" } }),
       h("div", {}, h("div", { style: { fontSize: "18px", fontWeight: 650 } }, b.appName), h("div", { class: "muted" }, b.company + " · verzió " + b.version))),
     h("dl", { class: "kv" },
       h("dt", {}, "Beállítások"), h("dd", { class: "mono selectable" }, b.settingsPath),
