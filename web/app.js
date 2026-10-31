@@ -720,16 +720,42 @@ const SCHED_TYPES = [
 // Turns a picked e-mail ("watch e-mails like this" in Thunderbird) into a new
 // e-mail item: the date in the subject becomes a token, the send time the
 // expected time.
+// Dates that appear in report e-mail subjects → token format.
+const MAIL_DATE_FORMS = [
+  [/(20\d{2})\.(\d{2})\.(\d{2})/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyy.MM.dd"],
+  [/(20\d{2})-(\d{2})-(\d{2})/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyy-MM-dd"],
+  [/(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyyMMdd"],
+  [/(\d{2})\.(\d{2})\.(20\d{2})/, m => new Date(+m[3], +m[2] - 1, +m[1]), "dd.MM.yyyy"],
+  [/(20\d{2})\.(\d{2})(?![.\d])/, m => new Date(+m[1], +m[2] - 1, 1), "yyyy.MM"],
+];
+
+// The subject with its date replaced by a token: the same report on
+// different days gives the same template (for grouping the e-mail picker).
+function subjectTemplate(subject) {
+  for (const [re, , fmt] of MAIL_DATE_FORMS) if (re.test(subject)) return subject.replace(re, "{" + fmt + "}");
+  return subject;
+}
+
+// Guesses the schedule from the send times of the same report.
+function inferSchedule(dates) {
+  const mins = dates.map(d => d.getHours() * 60 + d.getMinutes()).sort((a, b) => a - b);
+  const med = mins[Math.floor(mins.length / 2)];
+  const m5 = Math.floor(med / 5) * 5;
+  const t = String(Math.floor(m5 / 60)).padStart(2, "0") + ":" + String(m5 % 60).padStart(2, "0");
+  if (dates.length < 3) return { type: "daily", times: [t] };
+  const wd = new Set(dates.map(d => d.getDay()));
+  const md = new Set(dates.map(d => d.getDate()));
+  const months = new Set(dates.map(d => d.getFullYear() * 12 + d.getMonth()));
+  if (md.size === 1 && months.size >= 2) return { type: "monthly", monthlyMode: "day", monthDay: dates[0].getDate(), times: [t] };
+  if (wd.size === 1) return { type: "weekly", weekdays: [((dates[0].getDay() + 6) % 7) + 1], times: [t] };
+  if (![...wd].some(d => d === 0 || d === 6) && wd.size >= 3) return { type: "workdays", times: [t], useHolidays: true };
+  return { type: "daily", times: [t] };
+}
+
 function suggestFromMail(it, d) {
   const sent = parseT(d.date) || new Date();
   const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate());
-  const forms = [
-    [/(20\d{2})\.(\d{2})\.(\d{2})/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyy.MM.dd"],
-    [/(20\d{2})-(\d{2})-(\d{2})/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyy-MM-dd"],
-    [/(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)/, m => new Date(+m[1], +m[2] - 1, +m[3]), "yyyyMMdd"],
-    [/(\d{2})\.(\d{2})\.(20\d{2})/, m => new Date(+m[3], +m[2] - 1, +m[1]), "dd.MM.yyyy"],
-    [/(20\d{2})\.(\d{2})(?![.\d])/, m => new Date(+m[1], +m[2] - 1, 1), "yyyy.MM"],
-  ];
+  const forms = MAIL_DATE_FORMS;
   let subject = d.subject, name = d.subject;
   for (const [re, toDate, fmt] of forms) {
     const m = subject.match(re);
@@ -907,6 +933,81 @@ async function openEditor(item, draft) {
       compose();
     } catch (e) { fail(e); }
   }
+  // ---- picking the e-mail from the latest messages of the watched folders
+  function mailPicker() {
+    const box = h("div", { class: "mail-pick" });
+    const draw = (state, data) => {
+      const sel = h("select", { class: "input grow", disabled: state !== "ok", onchange: e => {
+        const g = groups[+e.target.value];
+        if (g) applyPick(g);
+      } });
+      let groups = [];
+      if (state === "loading") sel.append(h("option", {}, "A Thunderbird legutóbbi leveleinek betöltése…"));
+      else if (state === "error") sel.append(h("option", {}, "A lista nem érhető el"));
+      else {
+        groups = groupMails(data.messages);
+        sel.append(h("option", { value: "" }, groups.length ? "— Válasszon a legutóbbi e-mailek közül (" + groups.length + " féle) —" : "Nincs levél a figyelt mappákban"));
+        const multiFolder = new Set(groups.map(g => g.where)).size > 1;
+        groups.forEach((g, i) => sel.append(h("option", { value: i, title: g.where + " · " + g.newest.subject },
+          g.template + "  ·  " + (g.count > 1 ? g.count + " db, utolsó: " : "") + fmtDateTime(g.newest.date) + (multiFolder ? "  ·  " + g.where : ""))));
+      }
+      clear(box).append(h("label", { class: "field" }, "Választás a legutóbbi e-mailek közül",
+        h("div", { class: "row" }, sel,
+          h("button", { class: "btn", title: "Lista frissítése a Thunderbirdből", disabled: state === "loading", onclick: () => load(true) }, icon("refresh")))),
+        state === "error" ? h("div", { class: "small", style: { color: "var(--missing)", marginTop: "4px" } }, data) : "",
+        state === "ok" ? h("div", { class: "small muted", style: { marginTop: "4px" } },
+          "A Thunderbird-bővítmény figyelt mappáiból (" + ((data.folders || []).join(", ") || "–") + "), az elmúlt 45 nap. " +
+          (data.fresh ? "" : "Régebbi lista (" + fmtDateTime(data.at, true) + ") – a Thunderbird most nem válaszolt.")) : "");
+    };
+    const load = async force => {
+      if (!force && S.recentMails && Date.now() - S.recentMails.loaded < 120000) return draw("ok", S.recentMails);
+      draw("loading");
+      try {
+        const r = await api("recentMails");
+        S.recentMails = Object.assign(r, { loaded: Date.now() });
+        draw("ok", r);
+      } catch (e) { draw("error", e.message); }
+    };
+    load(false);
+    return box;
+  }
+  function groupMails(list) {
+    const by = new Map();
+    for (const m of list || []) {
+      const where = (m.account ? m.account + " / " : "") + m.folder;
+      const template = subjectTemplate(m.subject);
+      const key = where + "|" + template;
+      if (!by.has(key)) by.set(key, { template, where, count: 0, newest: m, dates: [] });
+      const g = by.get(key);
+      g.count++;
+      g.dates.push(new Date(m.date));
+      if (m.date > g.newest.date) g.newest = m;
+    }
+    return [...by.values()].sort((a, b) => (a.newest.date < b.newest.date ? 1 : -1));
+  }
+  function applyPick(g) {
+    const m = g.newest;
+    const keep = { group: it.group, owner: it.owner };
+    suggestFromMail(it, { subject: m.subject, folder: m.folder, account: m.account, date: m.date });
+    // the schedule editor works on the original object: replace its content
+    let ns = inferSchedule(g.dates);
+    // a monthly report (month in the subject) seen only once or twice
+    if (g.dates.length < 3 && g.template.includes("{yyyy.MM}")) ns = { type: "monthly", monthlyMode: "day", monthDay: new Date(m.date).getDate(), times: ns.times };
+    for (const k of Object.keys(sp)) delete sp[k];
+    Object.assign(sp, ns);
+    it.schedule = sp;
+    Object.assign(it, keep);
+    if (g.count > 1) it.note = "Thunderbirdből: „" + g.template + "” – " + g.count + " levél az elmúlt 45 napban, utolsó: " + fmtDateTime(m.date) + " (" + g.where + ")";
+    $("#ed-name").value = it.name;
+    const note = $("#ed-note");
+    if (note) note.value = it.note;
+    fillFields();
+    composeMail();
+    renderPathHelp();
+    renderSchedule();
+    onChange("schedule");
+    toast("Kitöltve: tárgy, mappa és ütemezés – ellenőrizze, majd mentse.");
+  }
   function setPathMode(m) {
     if (m === pathMode) return;
     if (pathMode === "email") {
@@ -948,6 +1049,7 @@ async function openEditor(item, draft) {
     const sus = document.querySelector(".modal .sus-fs");
     if (sus) sus.style.display = pathMode === "email" ? "none" : "";
     if (pathMode === "email") {
+      pathBox.append(mailPicker());
       pathBox.append(h("label", { class: "field" }, "E-mail tárgya (minta)", subjInput),
         h("div", { class: "grid2", style: { marginTop: "10px" } },
           h("label", { class: "field" }, "Mappa (nem kötelező)", mfolderInput),
@@ -1200,7 +1302,7 @@ async function openEditor(item, draft) {
             field("Név *", text(it, "name", { id: "ed-name", placeholder: "pl. Napi értékesítési export" })),
             field("Csoport", text(it, "group", { list: "ed-groups", placeholder: "pl. KNIME" })),
             field("Felelős", text(it, "owner", { placeholder: "pl. Kiss Anna" })),
-            field("Megjegyzés", text(it, "note", { placeholder: "pl. KNIME workflow neve, teendő hiba esetén" }))),
+            field("Megjegyzés", text(it, "note", { id: "ed-note", placeholder: "pl. KNIME workflow neve, teendő hiba esetén" }))),
           h("datalist", { id: "ed-groups" }, S.groups.map(g => h("option", { value: g })))),
         h("fieldset", {}, h("legend", {}, "Mit figyel?"),
           pathBox,
@@ -1762,7 +1864,7 @@ function updateTbConn(st) {
   const el = $("#tbConn");
   if (!el) return;
   const c = tbConnText(st);
-  clear(el).append(h("span", { class: "pill " + c.cls }, h("span", { class: "dot" }), c.label), c.text ? h("span", { class: "small muted" }, c.text) : null);
+  clear(el).append(h("span", { class: "pill " + c.cls }, h("span", { class: "dot" }), c.label), c.text ? h("span", { class: "small muted" }, c.text) : "");
 }
 
 async function copyText(text, input) {

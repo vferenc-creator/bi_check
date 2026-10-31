@@ -114,6 +114,33 @@ async function scan() {
   }
 }
 
+// The newest messages of the watched folders, for the e-mail picker of the
+// BI Monitor editor ("which report do you want to watch?").
+async function sendRecent() {
+  let days = 45, limit = 500;
+  try {
+    const rr = await api("/rules");
+    days = rr.recentDays || days;
+    limit = rr.recentLimit || limit;
+  } catch (_) { /* defaults */ }
+  const folders = BIM.watchedFolders(await allFolders(), cfg.folders);
+  const fromDate = new Date(Date.now() - days * 86400000);
+  const all = [];
+  for (const f of folders) {
+    try {
+      let page = await messenger.messages.query(Object.assign({ fromDate }, folderQuery(f)));
+      for (;;) {
+        for (const m of page.messages) all.push(BIM.toMsg(m, f));
+        if (!page.id) break;
+        page = await messenger.messages.continueList(page.id);
+      }
+    } catch (e) {
+      console.warn("BI Monitor: recent", f.label, e);
+    }
+  }
+  await api("/recent", { method: "POST", body: { messages: BIM.newest(all, limit) } });
+}
+
 async function refreshStatus() {
   try {
     const st = await api("/status");
@@ -157,6 +184,7 @@ async function openMessage(c) {
 
 async function handle(cmd) {
   if (cmd.type === "scan") await scan();
+  else if (cmd.type === "recent") await sendRecent().catch(e => console.warn("BI Monitor: recent", e));
   else if (cmd.type === "open") await openMessage(cmd).catch(e => console.warn("BI Monitor: open", e));
 }
 

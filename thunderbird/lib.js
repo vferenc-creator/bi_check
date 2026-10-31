@@ -63,6 +63,11 @@
     return matchesById;
   }
 
+  // Newest n messages (ISO dates sort as text).
+  function newest(list, n) {
+    return list.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, n);
+  }
+
   // Badge: number of problems, "!" when the application is not reachable.
   function badge(connected, status) {
     if (!connected) return { text: "!", color: "#7C5CC4", title: "BI Monitor – nincs kapcsolat az alkalmazással" };
@@ -91,7 +96,7 @@
     return d.toLocaleDateString("hu-HU", { month: "2-digit", day: "2-digit" }) + " " + hm;
   }
 
-  const api = { normalize, folderKey, flattenFolders, watchedFolders, compileRules, matches, toMsg, trim, badge, newProblems, STATUS_COLOR, fmtDate };
+  const api = { normalize, folderKey, flattenFolders, watchedFolders, compileRules, matches, toMsg, trim, newest, badge, newProblems, STATUS_COLOR, fmtDate };
   root.BIM = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

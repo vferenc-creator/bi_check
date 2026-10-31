@@ -3,6 +3,7 @@ package app
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -338,5 +339,26 @@ func TestEmailItemsInSharedMode(t *testing.T) {
 	w := tbReq(t, anna.tbHandler(), "GET", "/api/tb/v1/rules", keyA, nil, nil)
 	if !strings.Contains(w.Body.String(), `riport \\d{4}`) {
 		t.Fatalf("anna's Thunderbird gets the new rule: %s", w.Body.String())
+	}
+}
+
+func TestMailHubRecent(t *testing.T) {
+	h := mailwatch.New(nil)
+	go func() {
+		// the add-on picks up the "recent" command and answers
+		cmds := h.Poll(context.Background(), time.Second)
+		if len(cmds) != 1 || cmds[0].Type != "recent" {
+			t.Errorf("command: %+v", cmds)
+		}
+		h.SetRecent([]mailwatch.Msg{{Subject: "régi", Date: time.Now().Add(-time.Hour)}, {Subject: "új", Date: time.Now()}})
+	}()
+	list, at, fresh := h.Recent(context.Background(), 2*time.Second)
+	if !fresh || at.IsZero() || len(list) != 2 || list[0].Subject != "új" {
+		t.Fatalf("%v %v %+v", fresh, at, list)
+	}
+	// No answer: the cached list comes back, marked not fresh.
+	list, _, fresh = h.Recent(context.Background(), 50*time.Millisecond)
+	if fresh || len(list) != 2 {
+		t.Fatalf("cached: %v %+v", fresh, list)
 	}
 }

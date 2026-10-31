@@ -279,14 +279,15 @@ A BI Monitor frissítésekor a telepített bővítmény is frissül (a Thunderbi
 </details>
 
 **E-mail figyelés felvétele**
-- BI Monitor: *Új elem* → *Mit figyel?* → **E-mail**: a tárgy (minta), ha kell a mappa (pl. `Elküldött`) és a feladó/címzett (pl. `vezetes@`).
+- BI Monitor: *Új elem* → *Mit figyel?* → **E-mail** → **„Választás a legutóbbi e-mailek közül”** lenyíló lista: a bővítmény figyelt mappáinak (pl. az adott fiók Beérkezett vagy Elküldött mappája) elmúlt 45 napi levelei, az ismétlődő riportok egy sorba vonva („Napi értékesítési riport {yyyy.MM.dd} · 29 db, utolsó: tegnap 07:04”). Választáskor kitölti a tárgymintát (a dátumból token, eltolással, ha a levél pl. az előző napi adatot küldi), a fiókot és mappát, és a kiküldések alapján az ütemezést (munkanapokon / hetente / havonta / naponta, a szokásos időponttal). A lista a ⟳ gombbal frissíthető.
+- Vagy kézzel: a tárgy (minta), ha kell a mappa (pl. `BI riport / Elküldött`) és a feladó/címzett (pl. `vezetes@`).
 - Vagy a Thunderbirdben egy kiment levélen **jobb gomb → „BI Monitor: figyelés erre az e-mailre…”**: a BI Monitorban kitöltött szerkesztő nyílik meg – a tárgyban lévő dátumból token lesz (`Napi riport 2026.10.30` → `Napi riport {yyyy.MM.dd:-1d}`, ha a levél egy nappal később ment ki), az elvárt időpont a kiküldés ideje.
 
 **Tárgyminta:** ha nincs benne `*`, az ilyen szöveget **tartalmazó** tárgyak számítanak (kis-/nagybetű és dupla szóköz nem számít). Dátum: `{yyyy.MM.dd}`, `{yyyyMMdd}`, eltolással `{yyyy.MM.dd:-1d}`; `*` = bármi. A bővítmény az elmúlt 40 nap leveleit nézi.
 
 **A bővítmény a Thunderbirdben**
 - Eszköztár-gomb (**BI Monitor**): a jelvényen a problémás e-mailek száma (`!` = nincs kapcsolat a BI Monitorral). Lenyitva: az e-mail figyelések állapota, az utolsó illeszkedő levél, **Megnyitás** (a levél megnyitása), **Részletek** (a BI Monitorban), *Keresés most*.
-- Beállítások: párosító kulcs, port, figyelt mappák, keresési gyakoriság (alapból 2 perc), és kérésre Thunderbird-értesítés is, ha egy e-mail kimaradt.
+- Beállítások: párosító kulcs, port, **figyelt mappák** (pl. egy fiók Beérkezett mappája az Elküldött helyett – a választólista is innen dolgozik), keresési gyakoriság (alapból 2 perc), és kérésre Thunderbird-értesítés is, ha egy e-mail kimaradt.
 - Új levél a figyelt mappában → fél percen belül újrakeres. A BI Monitor *Ellenőrzés most* gombja is azonnali keresést kér.
 
 **A BI Monitorban:** az e-mailes elemek a listában ✉ jellel látszanak; a részletpanelen a megtalált levél, a legutóbbi illeszkedő levelek, és a **Thunderbird** gomb (megnyitja a levelet a Thunderbirdben).

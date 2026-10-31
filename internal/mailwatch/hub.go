@@ -79,6 +79,60 @@ type Hub struct {
 	cmds    []Command
 	wake    chan struct{}
 	now     func() time.Time
+
+	// recent: the newest messages of the watched folders (for picking an
+	// e-mail in the editor), requested on demand.
+	recent     []Msg
+	recentAt   time.Time
+	recentWake chan struct{}
+}
+
+// RecentDays: how far back the e-mail picker lists messages.
+const RecentDays = 45
+
+// RecentLimit caps the picker list.
+const RecentLimit = 500
+
+// SetRecent stores the picker list sent by the add-on.
+func (h *Hub) SetRecent(list []Msg) {
+	l := append([]Msg(nil), list...)
+	sort.Slice(l, func(i, j int) bool { return l[i].Date.After(l[j].Date) })
+	if len(l) > RecentLimit {
+		l = l[:RecentLimit]
+	}
+	h.mu.Lock()
+	h.recent, h.recentAt = l, h.now()
+	h.info.LastContact = h.recentAt
+	w := h.recentWake
+	h.recentWake = nil
+	h.mu.Unlock()
+	if w != nil {
+		close(w)
+	}
+}
+
+// Recent asks the add-on for a fresh list and waits up to wait for it.
+// fresh=false: the add-on did not answer in time, the last known list is
+// returned (at = when it was received; zero if never).
+func (h *Hub) Recent(ctx context.Context, wait time.Duration) (list []Msg, at time.Time, fresh bool) {
+	h.mu.Lock()
+	if h.recentWake == nil {
+		h.recentWake = make(chan struct{})
+	}
+	w := h.recentWake
+	h.mu.Unlock()
+	h.Push(Command{Type: "recent"})
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-w:
+		fresh = true
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Msg(nil), h.recent...), h.recentAt, fresh
 }
 
 // New creates a hub (now may be nil).

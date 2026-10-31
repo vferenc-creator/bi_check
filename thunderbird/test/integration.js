@@ -132,6 +132,18 @@ const until = async (what, fn, ms = 15000) => {
   await until("new built-in key", async () => storage.key === tb.key);
   const good = await until("connected again", async () => { const s = await listeners.message({ type: "getState" }); return s.state.connected && s; });
   console.log("7. új kulcs a csomagban → átvéve, kapcsolódva:", good.state.connected);
+  // 10. E-mail picker in the editor: the newest messages of the watched folders.
+  let rec = await rpc("recentMails", null);
+  console.log("8. legutóbbi levelek (Elküldött) →", rec.fresh, rec.messages.map(m => m.subject).join(" | "));
+  assert.ok(rec.fresh && rec.messages.length === 3 && rec.messages.every(m => m.folder === "Elküldött"));
+  assert.ok(rec.messages[0].date >= rec.messages[1].date, "newest first");
+  // The user watches the Inbox of that account instead of Sent.
+  storage.folders = ["a1:/INBOX"];
+  await listeners.storage();
+  rec = await rpc("recentMails", null);
+  console.log("9. figyelt mappa: Beérkezett →", rec.messages.map(m => m.account + " / " + m.folder + ": " + m.subject).join(" | "));
+  assert.ok(rec.messages.length === 1 && rec.messages[0].folder === "Beérkezett");
+
   await rpc("deleteItem", { id });
   await rpc("tbSave", { enabled: false, port, staleMin: 15 });
   console.log("OK");

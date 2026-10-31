@@ -151,6 +151,8 @@ textarea.input { height: auto; min-height: 64px; padding: 8px 10px; resize: vert
 .time-menu { min-width: 0; width: 104px; max-height: 260px; overflow-y: auto; }
 .time-menu button { justify-content: center; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .time-menu button.on { background: var(--selected); font-weight: 700; }
+.mail-pick { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: var(--background); }
+.mail-pick select { font-size: 13px; }
 .tb-install { padding: 12px 14px; border-radius: 8px; background: var(--background); margin-bottom: 6px; display: flex; flex-direction: column; gap: 6px; }
 .gap-box { margin-top: 14px; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 8px; }
 .time-add { display: inline-flex; gap: 4px; }

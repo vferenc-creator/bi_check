@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -165,7 +166,8 @@ func (a *App) tbHandler() http.Handler {
 		if rules == nil {
 			rules = []mailwatch.Rule{}
 		}
-		writeJSON(w, 200, map[string]any{"rules": rules, "lookbackDays": mailwatch.LookbackDays, "scanIntervalSec": 120})
+		writeJSON(w, 200, map[string]any{"rules": rules, "lookbackDays": mailwatch.LookbackDays, "scanIntervalSec": 120,
+			"recentDays": mailwatch.RecentDays, "recentLimit": mailwatch.RecentLimit})
 	}))
 	mux.HandleFunc("/api/tb/v1/report", auth("POST", func(w http.ResponseWriter, r *http.Request) {
 		var rep mailwatch.Report
@@ -182,6 +184,17 @@ func (a *App) tbHandler() http.Handler {
 			}
 		}
 		a.P.Push("thunderbird", a.tbStatus())
+		writeJSON(w, 200, map[string]any{"ok": true})
+	}))
+	mux.HandleFunc("/api/tb/v1/recent", auth("POST", func(w http.ResponseWriter, r *http.Request) {
+		var p struct {
+			Messages []mailwatch.Msg `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error()})
+			return
+		}
+		a.Mail.SetRecent(p.Messages)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	}))
 	mux.HandleFunc("/api/tb/v1/status", auth("GET", func(w http.ResponseWriter, r *http.Request) {
@@ -380,6 +393,29 @@ func (a *App) registerThunderbirdAPI() {
 			return errors.New("csak https:// cím nyitható meg")
 		}
 		return a.P.ShellOpen(u)
+	})
+	// recentMails: the newest messages of the folders the add-on watches, for
+	// picking the e-mail to watch in the editor.
+	type recentResult struct {
+		Messages []mailwatch.Msg `json:"messages"`
+		At       time.Time       `json:"at"`
+		Fresh    bool            `json:"fresh"`
+		Folders  []string        `json:"folders"`
+	}
+	a.register("recentMails", func() (recentResult, error) {
+		if !a.Settings.Get().Thunderbird.Enabled {
+			return recentResult{}, errors.New("ezen a gépen nincs bekapcsolva a Thunderbird-kapcsolat (Beállítások → Thunderbird)")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		list, at, fresh := a.Mail.Recent(ctx, 10*time.Second)
+		if at.IsZero() {
+			return recentResult{}, errors.New("a Thunderbird nem válaszolt – fut a Thunderbird, és engedélyezve van a BI Monitor kiegészítő?")
+		}
+		if list == nil {
+			list = []mailwatch.Msg{}
+		}
+		return recentResult{Messages: list, At: at, Fresh: fresh, Folders: a.Mail.Info().Folders}, nil
 	})
 	a.register("takeMailDraft", func() (*MailDraft, error) {
 		a.tb.mu.Lock()
