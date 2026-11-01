@@ -578,7 +578,9 @@ function applySnapshot(snap) {
   S.snap = snap;
   S.items = snap.items || [];
   const scroll = $("#main").scrollTop;
-  if (!$(".overlay")) {
+  // The Settings page is a form: rebuilding it on every check result would
+  // throw away what the user is typing (and reset the database login choice).
+  if (!$(".overlay") && S.view !== "settings") {
     render();
     $("#main").scrollTop = scroll;
   } else {

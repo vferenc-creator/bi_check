@@ -414,6 +414,13 @@ func (s *Settings) Normalize() {
 	if s.Thunderbird.StaleMin <= 0 {
 		s.Thunderbird.StaleMin = d.Thunderbird.StaleMin
 	}
+	// No connection yet (settings file from an older version, or the fields
+	// were emptied): use the Energofish BI defaults. The password is never
+	// part of the defaults.
+	if strings.TrimSpace(s.Database.Server) == "" && strings.TrimSpace(s.Database.Database) == "" {
+		s.Database.Server, s.Database.Port, s.Database.Database = d.Database.Server, d.Database.Port, d.Database.Database
+		s.Database.Auth, s.Database.User = d.Database.Auth, d.Database.User
+	}
 	if s.Database.Auth != "sql" {
 		s.Database.Auth = "windows"
 	}
