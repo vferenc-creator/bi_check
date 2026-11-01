@@ -13,12 +13,11 @@ import (
 
 func TestDatabaseTabWithDemo(t *testing.T) {
 	a, _, dir := newTestApp(t)
+	// The defaults are prefilled from the KNIME connection (EF-BI / Dashboard,
+	// SQL user d.admin) – but with no password, and no structure fetched yet.
 	v := call[DBView](t, a, "dbLoad", dbLoadParam{})
-	if v.Configured {
-		t.Fatal("not configured by default")
-	}
-	if _, err := a.Call("dbFetch", nil); err == nil {
-		t.Fatal("fetch without settings must fail")
+	if !v.Configured || v.Conn.Server != "EF-BI" || v.Conn.Port != 1433 || v.Conn.Database != "Dashboard" || v.Conn.Auth != "sql" || v.Conn.User != "d.admin" || v.Conn.HasPassword {
+		t.Fatalf("defaults from KNIME: %+v", v.Conn)
 	}
 	v = call[DBView](t, a, "dbSaveConn", DBConn{DBSettings: model.DBSettings{Server: DemoServer, Database: "BI_DEMO"}})
 	if !v.Configured || v.Conn.Auth != "windows" || v.Conn.MaxRows != 100000 {
