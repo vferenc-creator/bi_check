@@ -107,3 +107,18 @@ func TestOldSettingsGetDatabaseDefaults(t *testing.T) {
 		t.Fatalf("own connection changed: %+v", d)
 	}
 }
+
+// The "Teljes tábla" row limit is kept as set (e.g. 10 million) – it used to
+// fall back to 100 000 above one million. Above the maximum it is capped.
+func TestDatabaseRowLimitIsKept(t *testing.T) {
+	st, err := OpenSettings(filepath.Join(t.TempDir(), "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range [][2]int{{10_000_000, 10_000_000}, {250_000_000, model.MaxDBRows}, {5, 100_000}, {1_500_000, 1_500_000}} {
+		s, err := st.Update(func(s *model.Settings) error { s.Database.MaxRows = c[0]; return nil })
+		if err != nil || s.Database.MaxRows != c[1] {
+			t.Fatalf("%d → %d, want %d (%v)", c[0], s.Database.MaxRows, c[1], err)
+		}
+	}
+}

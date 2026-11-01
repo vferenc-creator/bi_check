@@ -21,7 +21,10 @@ type Source interface {
 	Schema(ctx context.Context) (*Schema, error)
 	// Rows reads at most limit rows of a table (limit+1 are asked for, to
 	// know whether there are more). progress is called now and then.
-	Rows(ctx context.Context, t *Table, limit int, progress func(n int)) (*Result, error)
+	// Rows loads at most limit rows. progress is called now and then with
+	// the rows loaded so far; when it returns false, loading stops there
+	// (Truncated, Stopped = "memory").
+	Rows(ctx context.Context, t *Table, limit int, progress func(n int) bool) (*Result, error)
 	// Descriptions re-reads the MS_Description of one table and its columns.
 	Descriptions(ctx context.Context, schema, table string) (*Descs, error)
 	// SetDescription writes one description – the only statement that
@@ -471,7 +474,7 @@ func (m *MSSQL) each(ctx context.Context, q string, fn func(*sql.Rows) error) er
 
 // Rows reads the first rows of a table – the only statement that touches
 // table data, and it is a plain SELECT of a table taken from the catalog.
-func (m *MSSQL) Rows(ctx context.Context, t *Table, limit int, progress func(int)) (*Result, error) {
+func (m *MSSQL) Rows(ctx context.Context, t *Table, limit int, progress func(int) bool) (*Result, error) {
 	if t == nil || t.Gone {
 		return nil, errors.New("a tábla nem létezik")
 	}
@@ -510,13 +513,15 @@ func (m *MSSQL) Rows(ctx context.Context, t *Table, limit int, progress func(int
 			row[i] = Cell(v, cts[i].DatabaseTypeName())
 		}
 		res.Add(row)
-		if progress != nil && res.Total%2000 == 0 {
-			progress(res.Total)
+		if progress != nil && res.Total%2000 == 0 && !progress(res.Total) {
+			res.Truncated, res.Stopped = true, "memory"
+			break
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, Friendly(err)
 	}
+	res.Finish()
 	res.TookMs = time.Since(start).Milliseconds()
 	return res, nil
 }

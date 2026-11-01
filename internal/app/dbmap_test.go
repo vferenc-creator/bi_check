@@ -67,6 +67,28 @@ func TestDatabaseTabWithDemo(t *testing.T) {
 	if all.Total != 412 || all.Truncated {
 		t.Fatalf("%+v", all)
 	}
+	// one table at a time: the earlier results are freed
+	if a.dbResult(res.ID) != nil || a.dbResult(all.ID) == nil {
+		t.Fatal("earlier results must be freed")
+	}
+	// the row limit can be raised to millions and stays so
+	v = call[DBView](t, a, "dbSaveConn", DBConn{DBSettings: model.DBSettings{Server: DemoServer, Database: "BI_DEMO", MaxRows: 10_000_000}})
+	if v.Conn.MaxRows != 10_000_000 || a.Settings.Get().Database.MaxRows != 10_000_000 {
+		t.Fatalf("row limit: %d", v.Conn.MaxRows)
+	}
+	big := call[*dbmap.Result](t, a, "dbQuery", dbQueryParam{Table: "fact.Ertekesites", All: true})
+	if big.Total != 48210 || big.Truncated || big.Limit != 10_000_000 {
+		t.Fatalf("whole table: %d %v %d", big.Total, big.Truncated, big.Limit)
+	}
+	// editing the map (relations, groups, notes, map descriptions) never
+	// touches the database: only the description procedure would
+	call[dbmap.Doc](t, a, "dbApply", []dbmap.Op{
+		{Op: "relAdd", Relation: &dbmap.Relation{From: "fact.Ertekesites", FromCol: "DatumKulcs", To: "dim.Datum", ToCol: "DatumKulcs"}},
+		{Op: "tableDesc", Table: "dim.Datum", Text: "Naptár"},
+	})
+	if a.db.demo == nil || len(a.db.demo.Calls) != 0 {
+		t.Fatalf("the map must not write to the database: %v", a.db.demo)
+	}
 	if _, err := a.Call("dbQuery", mustJSON(dbQueryParam{Table: "dbo.nincs"})); err == nil {
 		t.Fatal("unknown table")
 	}

@@ -159,6 +159,7 @@
 .dbg-bar .dbg-search input { padding-left: 30px; width: 240px; border-radius: 10px; }
 .dbg-bar .dbg-search svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--muted); }
 .dbg-wrap { flex: 1; min-height: 0; overflow: auto; position: relative; user-select: text; }
+.dbg-wrap:focus { outline: none; }
 .dbg-table { position: relative; }
 .dbg-head { position: sticky; top: 0; z-index: 2; background: var(--surface); }
 .dbg-hrow, .dbg-frow, .dbg-row { display: flex; }

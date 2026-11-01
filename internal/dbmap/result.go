@@ -1,12 +1,16 @@
 package dbmap
 
 import (
+	"cmp"
 	"encoding/hex"
 	"fmt"
+	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -43,18 +47,22 @@ type Result struct {
 	Truncated bool        `json:"truncated"` // more rows exist than loaded
 	Limit     int         `json:"limit"`
 	All       bool        `json:"all"` // "whole table" was requested
-	FetchedAt time.Time   `json:"fetchedAt"`
-	TookMs    int64       `json:"tookMs"`
+	// Stopped tells why loading ended before the limit: "memory" – the
+	// computer was running out of free memory.
+	Stopped   string    `json:"stopped,omitempty"`
+	FetchedAt time.Time `json:"fetchedAt"`
+	TookMs    int64     `json:"tookMs"`
 
-	rows [][]any // cells: nil, int64, float64, Num, string, bool, time.Time, []byte
+	rows   [][]any // cells: nil, int64, float64, Num, string, bool, time.Time
+	intern []interner
 
 	mu      sync.Mutex
 	viewKey string
 	view    []int32
 }
 
-// MaxCells limits the memory a result may take (rows × columns).
-const MaxCells = 3_000_000
+// DefaultMaxRows is the row limit of "Teljes tábla" when none is set.
+const DefaultMaxRows = 100_000
 
 // MaxText is the longest text kept from one cell.
 const MaxText = 4000
@@ -92,11 +100,53 @@ func NewResult(table string, cols []ResultCol) *Result {
 	return &Result{ID: randHex(6), Table: table, Cols: cols, FetchedAt: time.Now()}
 }
 
+// interner shares repeated cell values of one column (partner names,
+// dates, prices…): a big table then needs far less memory.
+type interner struct {
+	m          map[any]any
+	off        bool
+	hits, miss int
+}
+
+const internMax = 1 << 16 // distinct values remembered per column
+
 // Add appends one row (cells already normalised by Cell).
 func (r *Result) Add(row []any) {
+	if r.intern == nil {
+		r.intern = make([]interner, len(row))
+	}
+	for i, v := range row {
+		switch v.(type) {
+		case string, Num, time.Time, int64, float64:
+		default:
+			continue
+		}
+		in := &r.intern[i]
+		if in.off {
+			continue
+		}
+		if x, ok := in.m[v]; ok {
+			row[i] = x
+			in.hits++
+			continue
+		}
+		in.miss++
+		switch {
+		case len(in.m) < internMax:
+			if in.m == nil {
+				in.m = map[any]any{}
+			}
+			in.m[v] = v
+		case in.hits < in.miss: // mostly unique values: not worth it
+			in.off, in.m = true, nil
+		}
+	}
 	r.rows = append(r.rows, row)
 	r.Total = len(r.rows)
 }
+
+// Finish is called when loading ended: it frees the loading helpers.
+func (r *Result) Finish() { r.intern = nil }
 
 // KindOf maps a SQL Server type name to a column kind.
 func KindOf(sqlType string) Kind {
@@ -253,13 +303,7 @@ func compare(a, b any) int {
 	}
 	if fa, ok := number(a); ok {
 		if fb, ok := number(b); ok {
-			switch {
-			case fa < fb:
-				return -1
-			case fa > fb:
-				return 1
-			}
-			return 0
+			return cmp.Compare(fa, fb)
 		}
 	}
 	if ta, ok := a.(time.Time); ok {
@@ -267,13 +311,153 @@ func compare(a, b any) int {
 			return ta.Compare(tb)
 		}
 	}
-	sa, sb := fmt.Sprint(Display(a, "")), fmt.Sprint(Display(b, ""))
-	return strings.Compare(strings.ToLower(sa), strings.ToLower(sb))
+	return compareFold(cellText(a, ""), cellText(b, ""))
+}
+
+// cellText is the text a cell is shown, searched and text-filtered by.
+func cellText(v any, sqlType string) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case Num:
+		return x.S
+	}
+	s, _ := Display(v, sqlType).(string)
+	return s
+}
+
+// sortKey makes text sort case-insensitively in Hungarian alphabetical
+// order: á, é, í, ó, ú go with their base letter, ö/ő after o, ü/ű after u.
+func sortKey(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return strings.ToLower(s)
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for _, c := range strings.ToLower(s) {
+		switch c {
+		case 'á', 'à', 'â', 'ä':
+			b.WriteByte('a')
+		case 'é', 'è', 'ê', 'ë':
+			b.WriteByte('e')
+		case 'í', 'ì', 'î', 'ï':
+			b.WriteByte('i')
+		case 'ó', 'ò', 'ô':
+			b.WriteByte('o')
+		case 'ö', 'ő':
+			b.WriteString("o~")
+		case 'ú', 'ù', 'û':
+			b.WriteByte('u')
+		case 'ü', 'ű':
+			b.WriteString("u~")
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// compareFold compares like sortKey (without allocating for ASCII).
+func compareFold(a, b string) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		x, y := a[i], b[i]
+		if x >= 0x80 || y >= 0x80 {
+			return strings.Compare(sortKey(a[i:]), sortKey(b[i:]))
+		}
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return cmp.Compare(x, y)
+		}
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+// matcher finds a lower-case text in cells, case-insensitively.
+type matcher struct {
+	low     string
+	ascii   bool // no accents: compare bytes without allocating
+	numeric bool // could appear in a number or date (else those are skipped)
+}
+
+func newMatcher(low string) matcher {
+	m := matcher{low: low, ascii: true, numeric: true}
+	for i := 0; i < len(low); i++ {
+		c := low[i]
+		if c >= 0x80 {
+			m.ascii = false
+		}
+		if !strings.ContainsRune("0123456789.-+: e", rune(c)) {
+			m.numeric = false
+		}
+	}
+	return m
+}
+
+func (m matcher) match(v any, sqlType string) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case string:
+		return m.text(x)
+	case Num, int64, float64, bool, time.Time:
+		if !m.numeric {
+			return false
+		}
+	}
+	return m.text(cellText(v, sqlType))
+}
+
+func (m matcher) text(s string) bool {
+	if !m.ascii {
+		return strings.Contains(strings.ToLower(s), m.low)
+	}
+	n := len(m.low)
+	if n == 0 {
+		return true
+	}
+	first := m.low[0]
+	for i := 0; i+n <= len(s); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != first {
+			continue
+		}
+		j := 1
+		for ; j < n; j++ {
+			c := s[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != m.low[j] {
+				break
+			}
+		}
+		if j == n {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- filters -----------------------------------------------------------------
 
-type cond func(v any, disp string) bool
+type cond func(v any) bool
 
 // parseFilter understands:
 //
@@ -282,7 +466,7 @@ type cond func(v any, disp string) bool
 //	>  >=  <  <=  összehasonlítás (számoknál számként, dátumnál dátumként)
 //	a..b          a és b között (a határokkal együtt)
 //	üres / null   NULL érték           !üres / !null  nem NULL
-func parseFilter(expr string, kind Kind) (cond, error) {
+func parseFilter(expr string, kind Kind, sqlType string) (cond, error) {
 	e := strings.TrimSpace(expr)
 	if e == "" {
 		return nil, nil
@@ -290,37 +474,31 @@ func parseFilter(expr string, kind Kind) (cond, error) {
 	low := strings.ToLower(e)
 	switch low {
 	case "null", "üres", "(üres)":
-		return func(v any, _ string) bool { return v == nil }, nil
+		return func(v any) bool { return v == nil }, nil
 	case "!null", "!üres", "nem üres":
-		return func(v any, _ string) bool { return v != nil }, nil
+		return func(v any) bool { return v != nil }, nil
 	}
-	cmp := func(lit string) (func(v any, disp string) (int, bool), error) {
+	cmpTo := func(lit string) (func(v any) (int, bool), error) {
 		lit = strings.TrimSpace(lit)
 		if kind == KindNumber || kind == KindBool {
 			f, err := parseNum(lit)
 			if err != nil {
 				return nil, fmt.Errorf("nem szám: %q", lit)
 			}
-			return func(v any, _ string) (int, bool) {
+			return func(v any) (int, bool) {
 				x, ok := number(v)
 				if !ok {
 					return 0, false
 				}
-				switch {
-				case x < f:
-					return -1, true
-				case x > f:
-					return 1, true
-				}
-				return 0, true
+				return cmp.Compare(x, f), true
 			}, nil
 		}
 		ll := strings.ToLower(lit)
-		return func(v any, disp string) (int, bool) {
+		return func(v any) (int, bool) {
 			if v == nil {
 				return 0, false
 			}
-			d := strings.ToLower(disp)
+			d := strings.ToLower(cellText(v, sqlType))
 			if kind == KindDate && len(d) > len(ll) && strings.HasPrefix(d, ll) {
 				return 0, true // "2024-01" = that month
 			}
@@ -328,17 +506,17 @@ func parseFilter(expr string, kind Kind) (cond, error) {
 		}, nil
 	}
 	if a, b, ok := strings.Cut(e, ".."); ok && a != "" && b != "" {
-		lo, err := cmp(a)
+		lo, err := cmpTo(a)
 		if err != nil {
 			return nil, err
 		}
-		hi, err := cmp(b)
+		hi, err := cmpTo(b)
 		if err != nil {
 			return nil, err
 		}
-		return func(v any, d string) bool {
-			x, ok1 := lo(v, d)
-			y, ok2 := hi(v, d)
+		return func(v any) bool {
+			x, ok1 := lo(v)
+			y, ok2 := hi(v)
 			return ok1 && ok2 && x >= 0 && y <= 0
 		}, nil
 	}
@@ -346,12 +524,12 @@ func parseFilter(expr string, kind Kind) (cond, error) {
 		if !strings.HasPrefix(e, op) {
 			continue
 		}
-		c, err := cmp(e[len(op):])
+		c, err := cmpTo(e[len(op):])
 		if err != nil {
 			return nil, err
 		}
-		return func(v any, d string) bool {
-			r, ok := c(v, d)
+		return func(v any) bool {
+			r, ok := c(v)
 			if !ok {
 				return op == "!=" || op == "<>"
 			}
@@ -370,7 +548,8 @@ func parseFilter(expr string, kind Kind) (cond, error) {
 			return r != 0
 		}, nil
 	}
-	return func(v any, d string) bool { return v != nil && strings.Contains(strings.ToLower(d), low) }, nil
+	m := newMatcher(low)
+	return func(v any) bool { return m.match(v, sqlType) }, nil
 }
 
 func parseNum(s string) (float64, error) {
@@ -415,7 +594,7 @@ func (r *Result) Fetch(q Query) Page {
 	return p
 }
 
-// Stats summarise the currently filtered rows.
+// Stats summarise the currently filtered rows (columns in parallel).
 func (r *Result) Stats() []ColStats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -427,9 +606,9 @@ func (r *Result) Stats() []ColStats {
 		}
 	}
 	out := make([]ColStats, len(r.Cols))
-	for c := range r.Cols {
+	parallel(len(r.Cols), func(c int) {
 		st := &out[c]
-		seen := map[string]bool{}
+		seen := map[any]struct{}{}
 		var lo, hi any
 		for _, i := range idx {
 			v := r.rows[i][c]
@@ -438,7 +617,7 @@ func (r *Result) Stats() []ColStats {
 				continue
 			}
 			if len(seen) < 10000 {
-				seen[fmt.Sprint(Display(v, r.Cols[c].Type))] = true
+				seen[v] = struct{}{}
 			}
 			if lo == nil || compare(v, lo) < 0 {
 				lo = v
@@ -449,11 +628,38 @@ func (r *Result) Stats() []ColStats {
 		}
 		st.Distinct = len(seen)
 		if lo != nil && r.Cols[c].Kind != KindBinary {
-			st.Min = fmt.Sprint(Display(lo, r.Cols[c].Type))
-			st.Max = fmt.Sprint(Display(hi, r.Cols[c].Type))
+			st.Min = cellText(lo, r.Cols[c].Type)
+			st.Max = cellText(hi, r.Cols[c].Type)
 		}
-	}
+	})
 	return out
+}
+
+// parallel runs fn(0..n-1) on all processor cores.
+func parallel(n int, fn func(i int)) {
+	w := min(runtime.NumCPU(), n)
+	if w <= 1 {
+		for i := 0; i < n; i++ {
+			fn(i)
+		}
+		return
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range w {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func sortedMap(m map[string]string) []string {
@@ -478,7 +684,7 @@ func (r *Result) compute(q Query) ([]int32, error) {
 		if ci < 0 {
 			continue
 		}
-		c, err := parseFilter(expr, r.Cols[ci].Kind)
+		c, err := parseFilter(expr, r.Cols[ci].Kind, r.Cols[ci].Type)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %v", name, err)
 		}
@@ -486,45 +692,155 @@ func (r *Result) compute(q Query) ([]int32, error) {
 			fs = append(fs, fc{ci, c})
 		}
 	}
-	search := strings.ToLower(strings.TrimSpace(q.Search))
-	view := make([]int32, 0, len(r.rows))
-	disp := func(v any, c int) string {
-		if v == nil {
-			return ""
-		}
-		return fmt.Sprint(Display(v, r.Cols[c].Type))
+	var sm *matcher
+	if s := strings.ToLower(strings.TrimSpace(q.Search)); s != "" {
+		m := newMatcher(s)
+		sm = &m
 	}
-rows:
-	for i, row := range r.rows {
+	keep := func(row []any) bool {
 		for _, f := range fs {
-			if !f.c(row[f.col], disp(row[f.col], f.col)) {
-				continue rows
+			if !f.c(row[f.col]) {
+				return false
 			}
 		}
-		if search != "" {
-			hit := false
-			for c, v := range row {
-				if v != nil && strings.Contains(strings.ToLower(disp(v, c)), search) {
-					hit = true
-					break
+		if sm == nil {
+			return true
+		}
+		for c, v := range row {
+			if sm.match(v, r.Cols[c].Type) {
+				return true
+			}
+		}
+		return false
+	}
+	n := len(r.rows)
+	var view []int32
+	if len(fs) == 0 && sm == nil {
+		view = make([]int32, n)
+		for i := range view {
+			view[i] = int32(i)
+		}
+	} else {
+		// big results are filtered in chunks on all cores, keeping row order
+		const chunk = 1 << 16
+		parts := make([][]int32, (n+chunk-1)/chunk)
+		parallel(len(parts), func(p int) {
+			var out []int32
+			for i := p * chunk; i < n && i < (p+1)*chunk; i++ {
+				if keep(r.rows[i]) {
+					out = append(out, int32(i))
 				}
 			}
-			if !hit {
-				continue
-			}
+			parts[p] = out
+		})
+		total := 0
+		for _, p := range parts {
+			total += len(p)
 		}
-		view = append(view, int32(i))
+		view = make([]int32, 0, total)
+		for _, p := range parts {
+			view = append(view, p...)
+		}
 	}
 	if sc := r.colIndex(q.Sort); sc >= 0 {
-		sort.SliceStable(view, func(a, b int) bool {
-			c := compare(r.rows[view[a]][sc], r.rows[view[b]][sc])
-			if q.Desc {
-				return c > 0
-			}
-			return c < 0
-		})
+		r.sortView(view, sc, q.Desc)
 	}
 	return view, nil
+}
+
+// sortView sorts the row indexes by one column; NULL is the smallest. Equal
+// values keep their order (the view is in row order, ties go by index).
+func (r *Result) sortView(view []int32, c int, desc bool) {
+	var nulls, vals []int32
+	allNum, allTime := true, true
+	for _, i := range view {
+		v := r.rows[i][c]
+		if v == nil {
+			nulls = append(nulls, i)
+			continue
+		}
+		vals = append(vals, i)
+		if _, ok := number(v); !ok {
+			allNum = false
+		}
+		if _, ok := v.(time.Time); !ok {
+			allTime = false
+		}
+	}
+	var by func(a, b int32) int
+	switch {
+	case allNum:
+		fk := make([]float64, len(vals))
+		pos := make([]int32, len(vals))
+		for k, i := range vals {
+			fk[k], _ = number(r.rows[i][c])
+			pos[k] = int32(k)
+		}
+		slices.SortFunc(pos, func(a, b int32) int {
+			if x := cmp.Compare(fk[a], fk[b]); x != 0 {
+				if desc {
+					return -x
+				}
+				return x
+			}
+			return cmp.Compare(a, b)
+		})
+		sorted := make([]int32, len(vals))
+		for k, p := range pos {
+			sorted[k] = vals[p]
+		}
+		vals = sorted
+	case allTime:
+		by = func(a, b int32) int { return r.rows[a][c].(time.Time).Compare(r.rows[b][c].(time.Time)) }
+	default:
+		lower := map[string]string{}
+		sk := make([]string, len(vals))
+		pos := make([]int32, len(vals))
+		for k, i := range vals {
+			s := cellText(r.rows[i][c], r.Cols[c].Type)
+			l, ok := lower[s]
+			if !ok {
+				l = sortKey(s)
+				if len(lower) < internMax {
+					lower[s] = l
+				}
+			}
+			sk[k], pos[k] = l, int32(k)
+		}
+		slices.SortFunc(pos, func(a, b int32) int {
+			if x := strings.Compare(sk[a], sk[b]); x != 0 {
+				if desc {
+					return -x
+				}
+				return x
+			}
+			return cmp.Compare(a, b)
+		})
+		sorted := make([]int32, len(vals))
+		for k, p := range pos {
+			sorted[k] = vals[p]
+		}
+		vals = sorted
+	}
+	if by != nil {
+		slices.SortFunc(vals, func(a, b int32) int {
+			if x := by(a, b); x != 0 {
+				if desc {
+					return -x
+				}
+				return x
+			}
+			return cmp.Compare(a, b)
+		})
+	}
+	// ascending: NULLs first; descending: NULLs last
+	if desc {
+		copy(view, vals)
+		copy(view[len(vals):], nulls)
+	} else {
+		copy(view, nulls)
+		copy(view[len(nulls):], vals)
+	}
 }
 
 func (r *Result) colIndex(name string) int {
@@ -544,14 +860,11 @@ func (r *Result) colIndex(name string) int {
 	return -1
 }
 
-// RowLimit is how many rows may be loaded for a table with ncols columns.
-func RowLimit(want, ncols int) int {
-	if ncols < 1 {
-		ncols = 1
-	}
-	cap := MaxCells / ncols
-	if want <= 0 || want > cap {
-		return cap
+// RowLimit is how many rows "Teljes tábla" loads (the user's setting; the
+// free memory of the computer is watched while loading).
+func RowLimit(want int) int {
+	if want <= 0 {
+		return DefaultMaxRows
 	}
 	return want
 }

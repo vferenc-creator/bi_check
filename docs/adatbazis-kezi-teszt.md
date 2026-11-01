@@ -30,7 +30,10 @@ A térkép logikáját, a tárolást (két gép egyszerre) és a sornézegetőt 
 ## 4. Sorok
 
 1. Egy kisebb táblán *Első 100 sor*: a dátum, szám (decimal), szöveg, GUID (uniqueidentifier) és NULL értékek helyesen jelennek meg.
-2. Egy nagyobb táblán *Teljes tábla*: a betöltés közben számol („… sor betöltve”), *Megszakítás* működik.
+2. Egy nagyobb táblán *Teljes tábla*: a betöltés közben számol („… / korlát sor betöltve”), *Megszakítás* működik.
+   - A korlátot 10 000 000-ra állítva, mentés és újraindítás után is 10 000 000 marad.
+   - Több millió soros táblán: a görgő, a Home/End és a görgetősáv húzása az utolsó sorig eljut; szűrés, keresés, rendezés néhány másodpercen belül kész.
+   - A táblázat bezárása után a Feladatkezelőben a program memóriája visszacsökken.
 3. Szűrők: `>0`, `=2024-03` (dátum oszlopon), `üres`; rendezés oszlopfejlécre kattintva.
 
 ## 5. Közös térkép (két gép, közös módban)

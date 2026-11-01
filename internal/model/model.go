@@ -322,6 +322,9 @@ type DBSettings struct {
 	DescProc string `json:"descProc"`
 }
 
+// MaxDBRows is the highest "Teljes tábla" row limit that can be set.
+const MaxDBRows = 100_000_000
+
 // DefaultThunderbirdPort is the local port of the add-on API.
 const DefaultThunderbirdPort = 47231
 
@@ -430,8 +433,12 @@ func (s *Settings) Normalize() {
 	if s.Database.TimeoutSec < 5 || s.Database.TimeoutSec > 600 {
 		s.Database.TimeoutSec = d.Database.TimeoutSec
 	}
-	if s.Database.MaxRows < 100 || s.Database.MaxRows > 1_000_000 {
+	// up to 100 million rows: the free memory is watched while loading
+	switch {
+	case s.Database.MaxRows < 100:
 		s.Database.MaxRows = d.Database.MaxRows
+	case s.Database.MaxRows > MaxDBRows:
+		s.Database.MaxRows = MaxDBRows
 	}
 	if s.Database.Port < 0 || s.Database.Port > 65535 {
 		s.Database.Port = 0
