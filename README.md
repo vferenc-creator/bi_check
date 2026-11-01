@@ -343,7 +343,7 @@ Ha valaki a korábbi verzióban a térképre írt leírást (még nem az adatbá
 
 ### Beállítás
 
-*Beállítások → Adatbázis*, vagy az Adatbázis fülön a fogaskerék. A mezők előre ki vannak töltve az Energofish BI-kapcsolattal (szerver `EF-BI`, port `1433`, adatbázis `Dashboard`, SQL-felhasználó `d.admin`); **jelszó nincs beállítva**, azt az első használatkor kell egyszer megadni (utána DPAPI-val titkosítva, gépenként tárolódik). A mezők szabadon átírhatók:
+*Beállítások → Adatbázis*, vagy az Adatbázis fülön a fogaskerék:
 
 | Mező | Példa / jelentés |
 |---|---|

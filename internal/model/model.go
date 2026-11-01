@@ -387,18 +387,8 @@ func DefaultSettings() Settings {
 			Quiet:      QuietHours{From: "22:00", To: "06:00"},
 		},
 		Thunderbird: ThunderbirdSettings{Port: DefaultThunderbirdPort, StaleMin: 15},
-		Database: DBSettings{
-			// Előre kitöltve az Energofish BI KNIME-kapcsolat alapján
-			// (db_connect.knwf): EF-BI / 1433 / Dashboard, SQL-felhasználó
-			// d.admin. A jelszó szándékosan üres: azt a felhasználó adja
-			// meg egyszer (DPAPI-val titkosítva tárolódik), a forrásban
-			// soha nincs jelszó.
-			Server: "EF-BI", Port: 1433, Database: "Dashboard",
-			Auth: "sql", User: "d.admin",
-			Encrypt: "trust", TimeoutSec: 30, MaxRows: 100000,
-			DescWrite: "proc", DescProc: "meta.leiras_beallit",
-		},
-		Items: []Item{},
+		Database:    DBSettings{Auth: "windows", Encrypt: "trust", TimeoutSec: 30, MaxRows: 100000, DescWrite: "proc", DescProc: "meta.leiras_beallit"},
+		Items:       []Item{},
 	}
 }
 
