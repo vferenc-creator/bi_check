@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -390,7 +391,7 @@ func TestResultFilterSort(t *testing.T) {
 	if st[1].Nulls != 10 || st[0].Min != "1" || st[0].Max != "100" || st[0].Distinct != 100 {
 		t.Fatalf("%+v", st)
 	}
-	if RowLimit(100000, 60) != 50000 || RowLimit(100, 10) != 100 {
+	if RowLimit(0) != DefaultMaxRows || RowLimit(10_000_000) != 10_000_000 {
 		t.Fatal("row limit")
 	}
 }
@@ -437,5 +438,110 @@ func TestDemoDescriptions(t *testing.T) {
 	}
 	if err := d.SetDescription(context.Background(), DefaultDescProc, "dim", "Partner", "nincs", "x"); err == nil {
 		t.Fatal("unknown column")
+	}
+}
+
+// Big results: filtering runs in chunks on all cores, sorting by keys,
+// repeated values are shared – the answers must stay exactly the same.
+func TestResultBigAndInterning(t *testing.T) {
+	cols := []ResultCol{{Name: "ID", Type: "int", Kind: KindNumber}, {Name: "Nev", Type: "nvarchar", Kind: KindText},
+		{Name: "Ar", Type: "decimal", Kind: KindNumber}, {Name: "Datum", Type: "date", Kind: KindDate}}
+	r := NewResult("dbo.Nagy", cols)
+	names := []string{"Balaton Hal Zrt.", "Tisza-Fish Bt.", "Árvíztűrő Kft.", "kárász kft."}
+	day := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	const n = 300_000
+	for i := 0; i < n; i++ {
+		var nev any = names[i%4]
+		if i%10 == 0 {
+			nev = nil
+		}
+		f := float64(i%1000) / 4
+		r.Add([]any{int64(i), nev, Num{S: strconv.FormatFloat(f, 'f', 2, 64), F: f}, day.AddDate(0, 0, i%366)})
+	}
+	r.Finish()
+	if r.intern != nil || r.Total != n {
+		t.Fatal("finish")
+	}
+	page := func(q Query) Page {
+		t.Helper()
+		p := r.Fetch(q)
+		if p.Error != "" {
+			t.Fatal(p.Error)
+		}
+		return p
+	}
+	// case-insensitive search, also with accents, numbers are skipped for text
+	if p := page(Query{Search: "KFT"}); p.Filtered != n/4*2-n/10/2 {
+		t.Fatalf("search kft: %d", p.Filtered)
+	}
+	if p := page(Query{Search: "ÁRVÍZ"}); p.Filtered != n/4-n/20 {
+		t.Fatalf("accent search: %d", p.Filtered)
+	}
+	if p := page(Query{Search: "299999"}); p.Filtered != 1 || p.Rows[0][0] != "299999" {
+		t.Fatalf("number search: %d", p.Filtered)
+	}
+	if p := page(Query{Search: "2024-12-31"}); p.Filtered == 0 {
+		t.Fatal("date search")
+	}
+	// filter keeps the row order
+	p := page(Query{Filters: map[string]string{"Ar": ">=249.75", "Nev": "tisza"}, Limit: 1000})
+	prev := -1
+	for _, row := range p.Rows {
+		id, _ := strconv.Atoi(row[0].(string))
+		if id <= prev || row[1] != "Tisza-Fish Bt." || row[2] != "249.75" {
+			t.Fatalf("%v", row)
+		}
+		prev = id
+	}
+	// sort: NULLs first ascending, last descending; ties stay in row order
+	p = page(Query{Sort: "Nev", Limit: 3})
+	if p.Rows[0][1] != nil || p.Rows[0][0] != "0" || p.Rows[1][0] != "10" {
+		t.Fatalf("asc %v", p.Rows)
+	}
+	p = page(Query{Sort: "Nev", Desc: true, Limit: 2})
+	if p.Rows[0][1] != "Tisza-Fish Bt." || p.Rows[0][0] != "1" || p.Rows[1][0] != "5" {
+		t.Fatalf("desc %v", p.Rows)
+	}
+	p = page(Query{Sort: "Nev", Desc: true, Offset: n - 1, Limit: 1})
+	if p.Rows[0][1] != nil {
+		t.Fatal("NULL last descending")
+	}
+	p = page(Query{Sort: "Ar", Desc: true, Limit: 1})
+	if p.Rows[0][2] != "249.75" || p.Rows[0][0] != "999" {
+		t.Fatalf("decimal sort %v", p.Rows)
+	}
+	p = page(Query{Sort: "Datum", Limit: 1, Desc: true})
+	if p.Rows[0][3] != "2024-12-31" {
+		t.Fatalf("date sort %v", p.Rows)
+	}
+	_ = page(Query{})
+	st := r.Stats()
+	if st[0].Min != "0" || st[0].Max != "299999" || st[1].Nulls != n/10 || st[1].Distinct != 4 || st[2].Max != "249.75" || st[3].Distinct != 366 {
+		t.Fatalf("%+v", st)
+	}
+	if st[1].Min != "Árvíztűrő Kft." || st[1].Max != "Tisza-Fish Bt." {
+		t.Fatalf("text min/max %q %q", st[1].Min, st[1].Max)
+	}
+	// Hungarian order: Á with A, Ö after O
+	p = page(Query{Sort: "Nev", Offset: n / 10, Limit: 1})
+	if p.Rows[0][1] != "Árvíztűrő Kft." {
+		t.Fatalf("á sorts with a: %v", p.Rows)
+	}
+	for _, c := range [][2]string{{"Ár", "Az"}, {"Oz", "Öt"}, {"öt", "Pál"}, {"ÉVA", "éva2"}, {"abc", "ABD"}} {
+		if compareFold(c[0], c[1]) >= 0 || sortKey(c[0]) >= sortKey(c[1]) {
+			t.Fatalf("%q < %q", c[0], c[1])
+		}
+	}
+}
+
+// Loading stops (keeping the rows) when the memory check says so.
+func TestRowsStopOnLowMemory(t *testing.T) {
+	d := &Demo{}
+	sch := demoSchema(t, d)
+	tb := sch.Find("fact.Ertekesites")
+	calls := 0
+	res, err := d.Rows(context.Background(), tb, 1_000_000, func(n int) bool { calls++; return n < 4000 })
+	if err != nil || res.Total != 4000 || !res.Truncated || res.Stopped != "memory" || calls != 2 {
+		t.Fatalf("%d %v %q %d %v", res.Total, res.Truncated, res.Stopped, calls, err)
 	}
 }

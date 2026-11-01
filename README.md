@@ -353,7 +353,7 @@ Ha valaki a korábbi verzióban a térképre írt leírást (még nem az adatbá
 | Bejelentkezés | **Windows-bejelentkezés** (a bejelentkezett Windows-felhasználó jogaival) vagy **SQL Server-felhasználó** (felhasználónév + jelszó, a szem ikonnal megjeleníthető) |
 | Titkosítás | alapból titkosított kapcsolat, a belső szerver tanúsítványát elfogadja; régi szervereknél „csak a bejelentkezés titkosított” |
 | Időkorlát | a szerkezet és az első 100 sor lekérésére (mp) |
-| „Teljes tábla” legfeljebb | ennyi sort tölt be egy táblából (alap: 100 000; nagyon széles tábláknál a gép memóriája miatt kevesebbet) |
+| „Teljes tábla” legfeljebb | ennyi sort tölt be egy táblából (alap: 100 000, legfeljebb 100 millió). Memóriaigény kb. 30 bájt mezőnként: 10 millió sor × 10 mező ≈ 3 GB. Ha betöltés közben a gépen 10%-nál (legalább 1 GB-nál) kevesebb szabad memória marad, a betöltés megáll, és az addig betöltött sorok látszanak („kevés memória” jelzés). |
 
 A *Kapcsolat tesztelése* megmutatja a szervert, az adatbázist, a bejelentkezett felhasználót, a táblák számát és a leírást író eljárás elérhetőségét, és **figyelmeztet, ha a felhasználónak az adatokra is van írási joga** – a program ettől még csak olvas (és a leírás-eljárást hívja), de a legbiztonságosabb egy csak olvasási jogú (`db_datareader`) felhasználó vagy Windows-csoport, `EXECUTE` joggal a `meta.leiras_beallit` eljárásra.
 
@@ -374,7 +374,7 @@ Kipróbáláshoz a szerver mezőbe `(demo)` írható: ekkor egy beépített mint
 
 ### Sorok megnézése
 
-A részletpanelen vagy jobb klikkel: **Első 100 sor** vagy **Teljes tábla** (a beállított korlátig; a betöltés közben megszakítható). A táblázatban:
+A részletpanelen vagy jobb klikkel: **Első 100 sor** vagy **Teljes tábla** (a beállított korlátig; a betöltés közben megszakítható). Egyszerre egy tábla van a memóriában: új lekérdezéskor és a táblázat bezárásakor az előző felszabadul. Több millió sornál is végig lehet görgetni (görgő, nyilak, Page Up/Down, Home/End vagy a görgetősáv húzása); a szűrés, keresés és rendezés a gép összes processzormagját használja. A táblázatban:
 
 - minden oszlop látszik, a sorok görgetve töltődnek (több százezer sornál is gyors);
 - **oszloponkénti szűrő:** szöveg = tartalmazza; `>100`, `<=5`, `=HU`, `!=0`; `10..20` tartomány; `üres` / `!üres` (NULL); dátumnál `=2024-03` = az adott hónap; számoknál a tizedesvessző is jó (`<3,5`);

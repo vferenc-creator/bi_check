@@ -142,7 +142,7 @@ func (d *Demo) Schema(context.Context) (*Schema, error) {
 	return s, nil
 }
 
-func (d *Demo) Rows(ctx context.Context, t *Table, limit int, progress func(int)) (*Result, error) {
+func (d *Demo) Rows(ctx context.Context, t *Table, limit int, progress func(int) bool) (*Result, error) {
 	cols := make([]ResultCol, len(t.Columns))
 	for i, c := range t.Columns {
 		base := strings.ToUpper(strings.SplitN(c.Type, "(", 2)[0])
@@ -209,9 +209,11 @@ func (d *Demo) Rows(ctx context.Context, t *Table, limit int, progress func(int)
 			}
 		}
 		res.Add(row)
-		if progress != nil && res.Total%2000 == 0 {
-			progress(res.Total)
+		if progress != nil && res.Total%2000 == 0 && !progress(res.Total) {
+			res.Truncated, res.Stopped = true, "memory"
+			break
 		}
 	}
+	res.Finish()
 	return res, nil
 }

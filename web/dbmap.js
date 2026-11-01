@@ -1200,7 +1200,7 @@ function dbConnForm(inline, onSaved) {
       userBox,
       field("Titkosítás", enc, true),
       field("Időkorlát (mp)", inp("timeoutSec", "30", "number"), false, "Szerkezet és első 100 sor."),
-      field("„Teljes tábla” legfeljebb", inp("maxRows", "100000", "number"), false, "sor (a gép memóriája miatt)"),
+      field("„Teljes tábla” legfeljebb", inp("maxRows", "100000", "number"), false, "sor (legfeljebb 100 millió). Memóriaigény kb. 30 bájt mezőnként: 10 millió sor × 10 mező ≈ 3 GB. Ha fogy a szabad memória, a betöltés megáll."),
       h("div", { class: "field full" }, "Tábla- és mezőleírások", descSeg),
       procBox),
     h("div", { class: "small muted", style: { marginTop: "12px", lineHeight: 1.5 } },
@@ -1229,13 +1229,15 @@ function dbSettingsCard() {
 }
 
 // ---- row viewer ------------------------------------------------------------------
-const GRID_ROW = 28, GRID_PAGE = 200;
-bridge.on("dbProgress", p => { const el = $("#dbgProgress"); if (el) el.textContent = p.rows.toLocaleString("hu-HU") + " sor betöltve…"; });
+// Browsers cap the height of an element (Chromium: ~33 million px), so above
+// GRID_MAXH the scrollbar is scaled: its position picks the first row shown.
+const GRID_ROW = 28, GRID_PAGE = 200, GRID_MAXH = 8000000;
+bridge.on("dbProgress", p => { const el = $("#dbgProgress"); if (el) el.textContent = p.rows.toLocaleString("hu-HU") + (p.limit ? " / " + p.limit.toLocaleString("hu-HU") : "") + " sor betöltve…"; });
 
 async function dbOpenGrid(key, all) {
   $$(".overlay.dbg").forEach(o => o.remove());
   const t = dbTable(key);
-  const G = { key, all, res: null, q: { filters: {}, search: "", sort: "", desc: false }, pages: new Map(), filtered: 0, gen: 0, widths: [], stats: null, sel: null };
+  const G = { key, all, res: null, q: { filters: {}, search: "", sort: "", desc: false }, pages: new Map(), filtered: 0, gen: 0, widths: [], stats: null, sel: null, rowPos: 0, setTop: -1 };
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey, true); if (G.res) api("dbCloseResult", { id: G.res.id }).catch(() => {}); };
   const onKey = e => {
     if (!document.body.contains(ov)) return;
@@ -1271,7 +1273,8 @@ async function dbOpenGrid(key, all) {
   const numeric = cols.map(c => c.kind === "number");
   const search = h("input", { class: "input", placeholder: "Keresés minden mezőben…" });
   bar.append(
-    h("span", { class: "badge " + (r.all ? "new" : "fk") }, r.all ? (r.truncated ? "első " + r.total.toLocaleString("hu-HU") + " sor (korlát)" : "teljes tábla") : "első 100 sor"),
+    h("span", { class: "badge " + (r.all ? "new" : "fk"), title: r.stopped === "memory" ? "A betöltés megállt, mert a gépen elfogyóban volt a szabad memória. Az eddig betöltött sorok láthatók." : "" },
+      r.all ? (r.stopped === "memory" ? "első " + r.total.toLocaleString("hu-HU") + " sor (kevés memória)" : r.truncated ? "első " + r.total.toLocaleString("hu-HU") + " sor (korlát)" : "teljes tábla") : "első 100 sor"),
     t && t.rows >= 0 ? h("span", { class: "small muted" }, "a táblában kb. " + t.rows.toLocaleString("hu-HU") + " sor") : "",
     h("div", { class: "grow" }),
     h("label", { class: "dbg-search" }, icon("search"), search),
@@ -1356,12 +1359,29 @@ async function dbOpenGrid(key, all) {
   };
   const hideStats = () => { if (statsBox) statsBox.remove(); statsBox = null; };
 
+  // scaled scrolling (huge results): first row shown and its body offset
+  const scaled = () => G.filtered * GRID_ROW > GRID_MAXH;
+  const visRows = () => Math.max(1, Math.floor((wrap.clientHeight - head.offsetHeight) / GRID_ROW));
+  const maxPos = () => Math.max(0, G.filtered - visRows());
+  const maxTop = () => Math.max(1, wrap.scrollHeight - wrap.clientHeight);
   const renderRows = () => {
     const top = wrap.scrollTop, hgt = wrap.clientHeight;
     const headH = head.offsetHeight;
-    const from = Math.max(0, Math.floor((top - headH) / GRID_ROW) - 10);
-    const to = Math.min(G.filtered, Math.ceil((top + hgt) / GRID_ROW) + 10);
-    body.style.height = (G.filtered * GRID_ROW) + "px";
+    body.style.height = Math.min(G.filtered * GRID_ROW, GRID_MAXH) + "px";
+    let from, to, rowTop;
+    if (scaled()) {
+      // the scrollbar was dragged (not set by us): follow it
+      if (Math.abs(top - G.setTop) > 1) G.rowPos = Math.round(top / maxTop() * maxPos());
+      G.rowPos = Math.max(0, Math.min(maxPos(), G.rowPos));
+      const first = G.rowPos;
+      from = Math.max(0, first - 2);
+      to = Math.min(G.filtered, first + visRows() + 3);
+      rowTop = i => top + (i - first) * GRID_ROW;
+    } else {
+      from = Math.max(0, Math.floor((top - headH) / GRID_ROW) - 10);
+      to = Math.min(G.filtered, Math.ceil((top + hgt) / GRID_ROW) + 10);
+      rowTop = i => i * GRID_ROW;
+    }
     const need = new Set();
     for (let i = from; i < to; i++) if (!G.pages.has(Math.floor(i / GRID_PAGE))) need.add(Math.floor(i / GRID_PAGE));
     need.forEach(p => loadPage(p));
@@ -1369,7 +1389,7 @@ async function dbOpenGrid(key, all) {
     for (let i = from; i < to; i++) {
       const page = G.pages.get(Math.floor(i / GRID_PAGE));
       const row = page && page[i % GRID_PAGE];
-      const el = h("div", { class: "dbg-row", style: { top: (i * GRID_ROW) + "px" } }, h("div", { class: "rn" }, (i + 1).toLocaleString("hu-HU")));
+      const el = h("div", { class: "dbg-row", style: { top: rowTop(i) + "px" } }, h("div", { class: "rn" }, (i + 1).toLocaleString("hu-HU")));
       cols.forEach((c, ci) => {
         const v = row ? row[ci] : undefined;
         const txt = v == null ? "" : String(v);
@@ -1409,13 +1429,35 @@ async function dbOpenGrid(key, all) {
       if (bad) toast("Szűrő: " + bad, true);
       G.pages.set(0, pg.rows); G.filtered = pg.filtered;
       drawHead();
-      wrap.scrollTop = 0;
+      wrap.scrollTop = 0; G.rowPos = 0; G.setTop = 0;
       renderRows();
     } catch (e) { fail(e); }
   };
   search.addEventListener("input", () => { clearTimeout(search._t); search._t = setTimeout(() => { G.q.search = search.value; reload(); }, 300); });
   let raf = 0;
   wrap.addEventListener("scroll", () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderRows(); }); });
+  // scaled: the wheel and the keys move by rows, not by scrollbar pixels
+  const moveRows = d => {
+    G.rowPos = Math.max(0, Math.min(maxPos(), G.rowPos + d));
+    G.setTop = Math.round(G.rowPos / Math.max(1, maxPos()) * maxTop());
+    wrap.scrollTop = G.setTop;
+    G.setTop = wrap.scrollTop;
+    renderRows();
+  };
+  wrap.addEventListener("wheel", e => {
+    if (!scaled() || e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    const px = e.deltaMode === 1 ? e.deltaY * GRID_ROW : e.deltaMode === 2 ? e.deltaY * wrap.clientHeight : e.deltaY;
+    G.wheel = (G.wheel || 0) + px / GRID_ROW;
+    const d = Math.trunc(G.wheel);
+    if (d) { G.wheel -= d; moveRows(d); }
+  }, { passive: false });
+  wrap.tabIndex = -1;
+  wrap.addEventListener("keydown", e => {
+    if (!scaled() || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    const d = { ArrowDown: 1, ArrowUp: -1, PageDown: visRows(), PageUp: -visRows(), End: G.filtered, Home: -G.filtered }[e.key];
+    if (d) { e.preventDefault(); moveRows(d); }
+  });
   drawHead();
   renderRows();
 }

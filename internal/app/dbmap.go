@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -338,7 +339,7 @@ func (a *App) registerDBAPI() {
 		var ctx context.Context
 		var cancel context.CancelFunc
 		if p.All {
-			limit = dbmap.RowLimit(s.MaxRows, len(t.Columns))
+			limit = dbmap.RowLimit(s.MaxRows)
 			ctx, cancel = context.WithTimeout(context.Background(), 30*time.Minute)
 		} else {
 			ctx, cancel = context.WithTimeout(context.Background(), time.Duration(s.TimeoutSec)*time.Second)
@@ -348,19 +349,28 @@ func (a *App) registerDBAPI() {
 			a.db.cancel() // one query at a time
 		}
 		a.db.cancel = cancel
+		// the window shows one table at a time: free the earlier results
+		// before loading (a whole table can take gigabytes)
+		freed := len(a.db.results) > 0
+		a.db.results = nil
 		a.db.mu.Unlock()
+		if freed {
+			debug.FreeOSMemory()
+		}
 		defer func() {
 			cancel()
 			a.db.mu.Lock()
 			a.db.cancel = nil
 			a.db.mu.Unlock()
 		}()
-		last := time.Time{}
-		res, err := src.Rows(ctx, t, limit, func(n int) {
+		last, start := time.Time{}, time.Now()
+		lowMem := memoryWatch()
+		res, err := src.Rows(ctx, t, limit, func(n int) bool {
 			if time.Since(last) > 300*time.Millisecond {
 				last = time.Now()
-				a.P.Push("dbProgress", map[string]any{"table": t.Key(), "rows": n})
+				a.P.Push("dbProgress", map[string]any{"table": t.Key(), "rows": n, "limit": limit})
 			}
+			return !lowMem(n)
 		})
 		if err != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {
@@ -369,13 +379,16 @@ func (a *App) registerDBAPI() {
 			return nil, dbmap.Friendly(err)
 		}
 		res.All = p.All
+		if res.TookMs == 0 {
+			res.TookMs = time.Since(start).Milliseconds()
+		}
 		a.db.mu.Lock()
 		a.db.results = append(a.db.results, res)
 		if len(a.db.results) > 4 {
 			a.db.results = a.db.results[len(a.db.results)-4:]
 		}
 		a.db.mu.Unlock()
-		log.Printf("adatbázis: %s – %d sor (%d ms)", t.Key(), res.Total, res.TookMs)
+		log.Printf("adatbázis: %s – %d sor (%d ms)%s", t.Key(), res.Total, res.TookMs, map[bool]string{true: ", a kevés szabad memória miatt megállt"}[res.Stopped == "memory"])
 		return res, nil
 	})
 
@@ -416,7 +429,11 @@ func (a *App) registerDBAPI() {
 				out = append(out, r)
 			}
 		}
+		freed := len(out) < len(a.db.results)
 		a.db.results = out
+		if freed {
+			go debug.FreeOSMemory() // give a big table's memory back to Windows
+		}
 		return nil
 	})
 }
@@ -547,4 +564,22 @@ func (a *App) dbDescribe(p dbDescParam, write bool) (dbDescResult, error) {
 	res.Changed = out.Schema.Changed
 	res.Doc = out.Doc
 	return res, nil
+}
+
+// memoryWatch returns a check for loading a whole table: it reports true
+// (stop) when the computer is running out of free memory, so a huge table
+// cannot make Windows swap or the program crash. The rows loaded so far stay.
+func memoryWatch() func(rows int) bool {
+	_, total, ok := physMemory()
+	if !ok {
+		return func(int) bool { return false }
+	}
+	reserve := max(total/10, 1<<30) // keep 10% (at least 1 GB) free
+	return func(rows int) bool {
+		if rows%20000 != 0 {
+			return false
+		}
+		avail, _, ok := physMemory()
+		return ok && avail < reserve
+	}
 }
