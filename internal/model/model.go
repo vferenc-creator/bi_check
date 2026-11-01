@@ -303,9 +303,10 @@ type ThunderbirdSettings struct {
 
 // DBSettings: connection of the database browser (read only).
 type DBSettings struct {
-	Server   string `json:"server"`   // EF-SQL01, EF-SQL01\BI, EF-SQL01,1433 or "(demo)"
-	Database string `json:"database"` // database name
-	Auth     string `json:"auth"`     // "windows" (default) or "sql"
+	Server   string `json:"server"`         // EF-SQL01, EF-SQL01\BI, EF-SQL01,1433 or "(demo)"
+	Port     int    `json:"port,omitempty"` // 0 = default (1433, or the SQL Browser for a named instance)
+	Database string `json:"database"`       // database name
+	Auth     string `json:"auth"`           // "windows" (default) or "sql"
 	User     string `json:"user,omitempty"`
 	Encrypt  string `json:"encrypt"` // "trust" (default), "strict", "off"
 	// TimeoutSec for the structure query and the first rows.
@@ -414,6 +415,9 @@ func (s *Settings) Normalize() {
 	}
 	if s.Database.MaxRows < 100 || s.Database.MaxRows > 1_000_000 {
 		s.Database.MaxRows = d.Database.MaxRows
+	}
+	if s.Database.Port < 0 || s.Database.Port > 65535 {
+		s.Database.Port = 0
 	}
 	if s.Database.DescWrite != "off" {
 		s.Database.DescWrite = "proc"

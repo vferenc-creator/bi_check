@@ -34,6 +34,16 @@ func TestDSN(t *testing.T) {
 			t.Fatalf("read-only intent / app name: %+v", cfg)
 		}
 	}
+	// the separate port field (as in the KNIME connector: EF-BI / 1433 / Dashboard)
+	if cfg, err := (Config{Server: "EF-BI", Port: 1433, Database: "Dashboard"}).DSN(); err != nil || cfg.Host != "EF-BI" || cfg.Port != 1433 || cfg.Database != "Dashboard" {
+		t.Fatalf("port field: %+v %v", cfg, err)
+	}
+	if cfg, err := (Config{Server: "EF-BI,1500", Port: 1433, Database: "D"}).DSN(); err != nil || cfg.Port != 1433 {
+		t.Fatalf("port field wins: %+v %v", cfg, err)
+	}
+	if _, err := (Config{Server: "EF-BI", Port: 70000, Database: "D"}).DSN(); err == nil {
+		t.Fatal("invalid port")
+	}
 	cfg, err := Config{Server: "x", Database: "BI", Auth: "sql", User: "olvaso", Password: "p;w=d}"}.DSN()
 	if err != nil || cfg.User != "olvaso" || cfg.Password != "p;w=d}" {
 		t.Fatalf("sql auth: %+v %v", cfg, err)

@@ -347,9 +347,10 @@ Ha valaki a korábbi verzióban a térképre írt leírást (még nem az adatbá
 
 | Mező | Példa / jelentés |
 |---|---|
-| Szerver | `EF-SQL01`, példány: `EF-SQL01\BI`, port: `EF-SQL01,1433` |
-| Adatbázis | `BI` |
-| Bejelentkezés | **Windows-bejelentkezés** (ajánlott: a bejelentkezett Windows-felhasználó jogaival) vagy **SQL Server-felhasználó** (felhasználónév + jelszó) |
+| Szerver (hosztnév) | pl. `EF-BI`; nevesített példány: `EF-BI\PÉLDÁNY` |
+| Port | üresen 1433 (nevesített példánynál az SQL Browser adja meg); ha ki van töltve, mindig ezt használja |
+| Adatbázis | pl. `Dashboard` |
+| Bejelentkezés | **Windows-bejelentkezés** (a bejelentkezett Windows-felhasználó jogaival) vagy **SQL Server-felhasználó** (felhasználónév + jelszó, a szem ikonnal megjeleníthető) |
 | Titkosítás | alapból titkosított kapcsolat, a belső szerver tanúsítványát elfogadja; régi szervereknél „csak a bejelentkezés titkosított” |
 | Időkorlát | a szerkezet és az első 100 sor lekérésére (mp) |
 | „Teljes tábla” legfeljebb | ennyi sort tölt be egy táblából (alap: 100 000; nagyon széles tábláknál a gép memóriája miatt kevesebbet) |

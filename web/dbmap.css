@@ -105,10 +105,11 @@
 .dbv-tools .sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
 .dbv-tools .zoom { min-width: 48px; text-align: center; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
 .dbv-hint { position: absolute; left: 14px; bottom: 14px; font-size: 11.5px; color: var(--muted); background: color-mix(in srgb, var(--surface) 85%, transparent); padding: 6px 10px; border-radius: 10px; z-index: 4; pointer-events: none; }
-.dbv-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; z-index: 6; }
-.dbv-empty .card { max-width: 560px; width: 100%; }
-.dbv-empty .hero { text-align: center; padding: 26px 26px 22px; }
-.dbv-empty .hero .db-ic { width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 12px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-dark); display: grid; place-items: center; }
+/* the start card may be taller than the window: it scrolls (and is centred when it fits) */
+.dbv-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: safe center; padding: 20px 24px; z-index: 6; overflow: auto; cursor: default; }
+.dbv-empty .card { max-width: 600px; width: 100%; flex-shrink: 0; }
+.dbv-empty .hero { text-align: center; padding: 20px 26px 16px; }
+.dbv-empty .hero .db-ic { width: 48px; height: 48px; border-radius: 14px; margin: 0 auto 10px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-dark); display: grid; place-items: center; }
 .dbv-empty .hero .db-ic svg { width: 28px; height: 28px; }
 .dbv-empty .hero h2 { margin: 0 0 6px; font-size: 18px; }
 .dbv-empty .hero p { margin: 0 0 16px; color: var(--muted); line-height: 1.5; }
@@ -197,6 +198,11 @@
 .dbc-grid .field { display: grid; gap: 5px; font-size: 12.5px; font-weight: 600; align-content: start; }
 .dbc-grid .field .input { font-weight: 400; }
 .dbc-grid .full { grid-column: 1 / -1; }
+.dbc-host { display: grid; grid-template-columns: 1fr 130px; gap: 14px; }
+.dbc-pw { position: relative; display: block; }
+.dbc-pw .input { width: 100%; padding-right: 38px; }
+.dbc-pw .btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); height: 28px; width: 28px; }
+.dbc-pw .btn.on { color: var(--accent-dark); }
 .dbc-res { margin-top: 12px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; }
 .dbc-res.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .dbc-res.warn { background: color-mix(in srgb, var(--late) 14%, transparent); }

@@ -76,6 +76,7 @@ type ConnInfo struct {
 // Config of an MS SQL connection.
 type Config struct {
 	Server   string // EF-SQL01, EF-SQL01\BI, EF-SQL01,1433
+	Port     int    // 0 = from Server, or 1433 (named instance: SQL Browser)
 	Database string
 	Auth     string // "windows" (default) or "sql"
 	User     string
@@ -90,6 +91,12 @@ func (c Config) DSN() (msdsn.Config, error) {
 	host, inst, port, err := splitServer(c.Server)
 	if err != nil {
 		return msdsn.Config{}, err
+	}
+	if c.Port < 0 || c.Port > 65535 {
+		return msdsn.Config{}, fmt.Errorf("érvénytelen port: %d", c.Port)
+	}
+	if c.Port > 0 {
+		port = c.Port // the separate port field wins over "SZERVER,port"
 	}
 	db := strings.TrimSpace(c.Database)
 	if db == "" {

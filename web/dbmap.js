@@ -1122,13 +1122,16 @@ function dbConnForm(inline, onSaved) {
   const field = (label, el, full, hint) => h("label", { class: "field" + (full ? " full" : "") }, label, el, hint ? h("span", { class: "small muted", style: { fontWeight: 400 } }, hint) : null);
   const inp = (key, ph, type) => h("input", { class: "input" + (key === "server" || key === "database" ? " mono" : ""), type: type || "text", placeholder: ph || "", value: c[key] == null ? "" : c[key],
     oninput: e => { c[key] = type === "number" ? parseInt(e.target.value, 10) || 0 : e.target.value; } });
+  const portIn = h("input", { class: "input mono", type: "number", min: 1, max: 65535, placeholder: "1433", value: c.port ? String(c.port) : "",
+    oninput: e => { const v = parseInt(e.target.value, 10); c.port = v > 0 ? v : 0; } });
   const userBox = h("div", { class: "dbc-grid full", style: { gridColumn: "1 / -1" } });
   const drawUser = () => {
     clear(userBox);
     if (c.auth !== "sql") return;
     const pw = h("input", { class: "input", type: "password", autocomplete: "new-password", placeholder: c.hasPassword && !c.clearPassword ? "•••••••• (mentve – üresen hagyva megmarad)" : "Jelszó",
       oninput: e => { c.password = e.target.value; } });
-    userBox.append(field("Felhasználó", inp("user", "pl. bi_olvaso")), field("Jelszó", pw, false,
+    const eye = h("button", { type: "button", class: "btn sm icon ghost", title: "Jelszó megjelenítése", onclick: () => { pw.type = pw.type === "password" ? "text" : "password"; eye.classList.toggle("on", pw.type === "text"); } }, icon("eye"));
+    userBox.append(field("Felhasználó", inp("user", "pl. d.admin")), field("Jelszó", h("div", { class: "dbc-pw" }, pw, eye), false,
       "Titkosítva, csak ezen a gépen tárolódik (Windows DPAPI)."));
   };
   const auth = h("div", { class: "seg" }, [["windows", "Windows-bejelentkezés"], ["sql", "SQL Server-felhasználó"]].map(([v, l]) =>
@@ -1184,8 +1187,10 @@ function dbConnForm(inline, onSaved) {
   };
   return h("div", {},
     h("div", { class: "dbc-grid" },
-      field("Szerver", inp("server", "pl. EF-SQL01 vagy EF-SQL01\\BI"), false, "Példány: SZERVER\\PÉLDÁNY · port: SZERVER,1433. Kipróbáláshoz: (demo)"),
-      field("Adatbázis", inp("database", "pl. BI")),
+      h("div", { class: "full dbc-host" },
+        field("Szerver (hosztnév)", inp("server", "pl. EF-BI"), false, "Nevesített példány: SZERVER\\PÉLDÁNY. Kipróbáláshoz: (demo)"),
+        field("Port", portIn, false, "Üresen: 1433")),
+      field("Adatbázis", inp("database", "pl. Dashboard"), true),
       h("div", { class: "field full" }, "Bejelentkezés", auth),
       userBox,
       field("Titkosítás", enc, true),

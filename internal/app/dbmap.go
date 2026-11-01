@@ -48,7 +48,7 @@ func (a *App) dbConnView() DBConn {
 }
 
 func (a *App) dbConfig(s model.DBSettings, pw string) dbmap.Config {
-	return dbmap.Config{Server: s.Server, Database: s.Database, Auth: s.Auth, User: s.User, Password: pw, Encrypt: s.Encrypt,
+	return dbmap.Config{Server: s.Server, Port: s.Port, Database: s.Database, Auth: s.Auth, User: s.User, Password: pw, Encrypt: s.Encrypt,
 		Timeout: time.Duration(s.TimeoutSec) * time.Second}
 }
 
