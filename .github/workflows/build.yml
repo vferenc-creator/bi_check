@@ -5,7 +5,9 @@ name: build
 # pass all checks are published automatically as a GitHub Release marked
 # "Latest", so the newest exe is always at
 #   https://github.com/<owner>/<repo>/releases/latest
-# Version: <VERSION file>.<run number>, e.g. 1.0.17.
+# Version: <VERSION file>.<highest released number + 1>, e.g. 1.0.17 after
+# v1.0.16 – so releases are numbered without gaps, whatever other branches
+# have run.
 
 on:
   push:
@@ -49,7 +51,12 @@ jobs:
         shell: pwsh
         run: |
           $base = (Get-Content VERSION -Raw).Trim()
-          $v = "$base.${{ github.run_number }}"
+          $re = '^v' + [regex]::Escape($base) + '\.(\d+)$'
+          $last = 0
+          foreach ($t in (git tag --list "v$base.*")) {
+            if ($t -match $re -and [int]$Matches[1] -gt $last) { $last = [int]$Matches[1] }
+          }
+          $v = "$base.$($last + 1)"
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Version: $v"
       - name: Unit tests (Windows time zone database & file system)
