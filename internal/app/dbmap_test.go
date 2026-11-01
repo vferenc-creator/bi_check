@@ -122,3 +122,65 @@ func mustJSON(v any) []byte {
 	}
 	return b
 }
+
+// Descriptions live in the database: written only through the team's
+// procedure (parameters), read back, and visible to the other computer.
+func TestDatabaseDescriptions(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	shared := t.TempDir()
+	if _, err := a.Settings.Update(func(s *model.Settings) error {
+		s.Team.Folder, s.Team.Enabled = shared, true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	v := call[DBView](t, a, "dbSaveConn", DBConn{DBSettings: model.DBSettings{Server: DemoServer, Database: "BI_DEMO"}})
+	if v.Conn.DescWrite != "proc" || v.Conn.DescProc != "meta.leiras_beallit" {
+		t.Fatalf("defaults: %+v", v.Conn)
+	}
+	f := call[dbFetchResult](t, a, "dbFetch", nil)
+	stamp := f.Snap.Schema.Stamp()
+
+	r := call[dbDescResult](t, a, "dbSetDesc", dbDescParam{Table: "fact.ertekesites", Column: "penznem", Text: "  A számla pénzneme (pl. HUF, EUR) – 'idézőjellel'  "})
+	if r.Warning != "" || r.Table.Col("Penznem").Desc != "A számla pénzneme (pl. HUF, EUR) – 'idézőjellel'" {
+		t.Fatalf("%+v", r)
+	}
+	r = call[dbDescResult](t, a, "dbSetDesc", dbDescParam{Table: "fact.Ertekesites", Text: "Számlasoros értékesítés"})
+	if r.Table.Desc != "Számlasoros értékesítés" {
+		t.Fatalf("%+v", r.Table)
+	}
+	demo := a.db.demo
+	if len(demo.Calls) != 2 || !strings.HasPrefix(demo.Calls[0], `EXEC [meta].[leiras_beallit] "fact", "Ertekesites", "Penznem"`) ||
+		!strings.Contains(demo.Calls[1], `"Ertekesites", ""`) {
+		t.Fatalf("procedure calls: %q", demo.Calls)
+	}
+	// the other computer: the structure stamp changed → it reloads the structure
+	v = call[DBView](t, a, "dbLoad", dbLoadParam{Known: true, Rev: 0, Fetch: stamp})
+	if v.Snap == nil || v.Snap.Schema == nil || v.Snap.Schema.Find("fact.Ertekesites").Desc != "Számlasoros értékesítés" {
+		t.Fatal("changed descriptions must reach the other computers")
+	}
+	// re-read from the database
+	rr := call[dbDescResult](t, a, "dbReadDesc", dbDescParam{Table: "fact.Ertekesites"})
+	if rr.Table.Col("Penznem").Desc == "" {
+		t.Fatal("re-read")
+	}
+	// unknown column / table, too long, invalid procedure name
+	for _, bad := range []dbDescParam{{Table: "fact.Ertekesites", Column: "nincs"}, {Table: "dbo.nincs"}, {Table: "fact.Ertekesites", Text: strings.Repeat("x", 4000)}} {
+		if _, err := a.Call("dbSetDesc", mustJSON(bad)); err == nil {
+			t.Fatalf("expected error for %+v", bad)
+		}
+	}
+	for _, proc := range []string{"meta.leiras_beallit; DROP TABLE x", "a.b.c", "x'--", "[meta].[x]"} {
+		if _, err := a.Call("dbSaveConn", mustJSON(DBConn{DBSettings: model.DBSettings{Server: DemoServer, Database: "BI_DEMO", DescProc: proc}})); err == nil {
+			t.Fatalf("procedure name %q must be refused", proc)
+		}
+	}
+	// switched off: never writes
+	call[DBView](t, a, "dbSaveConn", DBConn{DBSettings: model.DBSettings{Server: DemoServer, Database: "BI_DEMO", DescWrite: "off"}})
+	if _, err := a.Call("dbSetDesc", mustJSON(dbDescParam{Table: "fact.Ertekesites", Text: "x"})); err == nil {
+		t.Fatal("writing must be refused when switched off")
+	}
+	if len(demo.Calls) != 2 {
+		t.Fatalf("no further calls expected: %q", demo.Calls)
+	}
+}

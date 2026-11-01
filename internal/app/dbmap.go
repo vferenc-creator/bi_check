@@ -169,21 +169,14 @@ func (a *App) dbView(p *dbLoadParam) DBView {
 		v.Error = err.Error()
 		return v
 	}
-	if p != nil && p.Known && snap.Doc.Rev == p.Rev && fetchedAt(snap.Schema).Equal(p.Fetch) && !snap.FromCache {
+	if p != nil && p.Known && snap.Doc.Rev == p.Rev && snap.Schema.Stamp().Equal(p.Fetch) && !snap.FromCache {
 		return DBView{Conn: v.Conn, Configured: true, Unchanged: true}
 	}
-	if p != nil && p.Known && fetchedAt(snap.Schema).Equal(p.Fetch) {
+	if p != nil && p.Known && snap.Schema.Stamp().Equal(p.Fetch) {
 		snap.Schema = nil // unchanged structure: only the (small) map is sent
 	}
 	v.Snap = snap
 	return v
-}
-
-func fetchedAt(s *dbmap.Schema) time.Time {
-	if s == nil {
-		return time.Time{}
-	}
-	return s.FetchedAt
 }
 
 func (a *App) registerDBAPI() {
@@ -195,6 +188,15 @@ func (a *App) registerDBAPI() {
 			if _, err := a.dbConfig(p.DBSettings, "x").DSN(); err != nil {
 				return DBView{}, err
 			}
+		}
+		if p.DescWrite != "off" {
+			if strings.TrimSpace(p.DescProc) == "" {
+				p.DescProc = dbmap.DefaultDescProc
+			}
+			if _, err := dbmap.QuoteProc(p.DescProc); err != nil {
+				return DBView{}, err
+			}
+			p.DescProc = strings.TrimSpace(p.DescProc)
 		}
 		if p.Auth != "sql" || p.ClearPassword {
 			if err := secret.Save(a.dbPasswordPath(), ""); err != nil {
@@ -220,7 +222,11 @@ func (a *App) registerDBAPI() {
 		s := p.DBSettings
 		s.Server, s.Database = strings.TrimSpace(s.Server), strings.TrimSpace(s.Database)
 		if isDemo(s) {
-			return (&dbmap.Demo{}).Info(context.Background())
+			ci, err := (&dbmap.Demo{}).Info(context.Background())
+			if s.DescWrite != "off" {
+				ci.DescProc, ci.DescProcOK, ci.DescProcExec = dbmap.DefaultDescProc, true, true
+			}
+			return ci, err
 		}
 		pw := p.Password
 		if pw == "" && s.Auth == "sql" && !p.ClearPassword {
@@ -237,7 +243,16 @@ func (a *App) registerDBAPI() {
 			return dbmap.ConnInfo{}, err
 		}
 		defer m.Close()
-		return m.Info(context.Background())
+		ci, err := m.Info(context.Background())
+		if err != nil || s.DescWrite == "off" {
+			return ci, err
+		}
+		if strings.TrimSpace(s.DescProc) == "" {
+			s.DescProc = dbmap.DefaultDescProc
+		}
+		ci.DescProc = s.DescProc
+		ci.DescProcOK, ci.DescProcExec, err = m.CheckProc(context.Background(), s.DescProc)
+		return ci, err
 	})
 
 	a.register("dbFetch", func() (dbFetchResult, error) {
@@ -364,6 +379,9 @@ func (a *App) registerDBAPI() {
 		return res, nil
 	})
 
+	a.register("dbSetDesc", a.dbSetDesc)
+	a.register("dbReadDesc", func(p dbDescParam) (dbDescResult, error) { return a.dbDescribe(p, false) })
+
 	a.register("dbCancel", func() error {
 		a.db.mu.Lock()
 		defer a.db.mu.Unlock()
@@ -412,4 +430,121 @@ func (a *App) dbResult(id string) *dbmap.Result {
 		}
 	}
 	return nil
+}
+
+// ---- descriptions in the database --------------------------------------------
+
+type dbDescParam struct {
+	Table  string `json:"table"`
+	Column string `json:"column"` // "" = the table itself
+	Text   string `json:"text"`
+}
+
+type dbDescResult struct {
+	Table   dbmap.Table `json:"table"`
+	Changed time.Time   `json:"changed"`
+	Doc     *dbmap.Doc  `json:"doc"`
+	Warning string      `json:"warning,omitempty"`
+}
+
+// maxDescLen: MS_Description is an sql_variant (at most 7500 bytes).
+const maxDescLen = 3750
+
+func (a *App) dbSetDesc(p dbDescParam) (dbDescResult, error) {
+	if a.Settings.Get().Database.DescWrite == "off" {
+		return dbDescResult{}, errors.New("a leírások adatbázisba írása ki van kapcsolva (Beállítások → Adatbázis)")
+	}
+	return a.dbDescribe(p, true)
+}
+
+// dbDescribe writes (write=true) one description with the team's procedure
+// and re-reads the descriptions of the table; the stored structure is
+// updated so the other computers see the change as well.
+func (a *App) dbDescribe(p dbDescParam, write bool) (dbDescResult, error) {
+	src, s, err := a.dbSource()
+	if err != nil {
+		return dbDescResult{}, err
+	}
+	snap, err := a.dbStore().Load(s.Server, s.Database)
+	if err != nil {
+		return dbDescResult{}, err
+	}
+	t := snap.Schema.Find(p.Table)
+	if t == nil || t.Gone {
+		return dbDescResult{}, errors.New("ez a tábla nem szerepel a lekért szerkezetben – kérje le újra a szerkezetet")
+	}
+	col := ""
+	if p.Column != "" {
+		c := t.Col(p.Column)
+		if c == nil {
+			return dbDescResult{}, fmt.Errorf("nincs ilyen mező: %s", p.Column)
+		}
+		col = c.Name // exact name from the database
+	}
+	var res dbDescResult
+	ctx := context.Background()
+	text := strings.TrimSpace(strings.ReplaceAll(p.Text, "\r\n", "\n"))
+	if write {
+		if n := len([]rune(text)); n > maxDescLen {
+			return res, fmt.Errorf("a leírás túl hosszú (%d karakter, legfeljebb %d)", n, maxDescLen)
+		}
+		if err := src.SetDescription(ctx, s.DescProc, t.Schema, t.Name, col, text); err != nil {
+			return res, err
+		}
+		what := t.Key()
+		if col != "" {
+			what += "." + col
+		}
+		log.Printf("adatbázis: leírás mentve (%s): %s", s.DescProc, what)
+	}
+	d, err := src.Descriptions(ctx, t.Schema, t.Name)
+	if err != nil {
+		if !write {
+			return res, err
+		}
+		// written, but could not be read back: keep what we wrote
+		res.Warning = "A leírás elmentve, de visszaolvasni nem sikerült: " + err.Error()
+		d = &dbmap.Descs{Table: t.Desc, Columns: map[string]string{}}
+		for _, c := range t.Columns {
+			d.Columns[c.Name] = c.Desc
+		}
+		if col == "" {
+			d.Table = text
+		} else {
+			d.Columns[col] = text
+		}
+	} else if write {
+		got := d.Table
+		if col != "" {
+			got = d.Columns[col]
+		}
+		if strings.TrimSpace(got) != text {
+			res.Warning = "Az eljárás lefutott, de az adatbázisban ez a leírás olvasható vissza: „" + got + "”"
+		}
+	}
+	key := t.Key()
+	out, err := a.dbStore().Update(s.Server, s.Database, func(doc *dbmap.Doc, sch *dbmap.Schema) (*dbmap.Schema, error) {
+		tt := sch.Find(key)
+		if tt == nil {
+			return nil, errors.New("a tábla közben eltűnt a térképről")
+		}
+		tt.Desc = d.Table
+		for i := range tt.Columns {
+			if v, ok := d.Columns[tt.Columns[i].Name]; ok {
+				tt.Columns[i].Desc = v
+			}
+		}
+		sch.Changed = time.Now()
+		return sch, nil
+	})
+	if err != nil {
+		if write {
+			return res, fmt.Errorf("a leírás az adatbázisba bekerült, de a térképre nem sikerült menteni: %w", err)
+		}
+		return res, err
+	}
+	res.Table = *out.Schema.Find(key)
+	res.Changed = out.Schema.Changed
+	res.Doc = out.Doc
+	return res, nil
 }

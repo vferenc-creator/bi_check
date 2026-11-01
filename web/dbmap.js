@@ -83,7 +83,7 @@ function fmtRows(n) { return n < 0 ? "" : n.toLocaleString("hu-HU") + " sor"; }
 async function dbLoad(quiet) {
   try {
     const known = !!(DB.doc && quiet);
-    const v = await api("dbLoad", known ? { known: true, rev: DB.doc.rev, fetch: DB.schema ? DB.schema.fetchedAt : "0001-01-01T00:00:00Z" } : {});
+    const v = await api("dbLoad", known ? { known: true, rev: DB.doc.rev, fetch: DB.schema ? (DB.schema.changed || DB.schema.fetchedAt) : "0001-01-01T00:00:00Z" } : {});
     if (v.unchanged) return;
     DB.view = v;
     if (v.snap) {
@@ -107,6 +107,11 @@ async function dbUndo(redo) {
   const st = redo ? DB.redo : DB.undo;
   const e = st.pop();
   if (!e) return;
+  if (e.undoFn) { // description in the database: undo = write the old text back
+    const ok = await (redo ? e.doFn() : e.undoFn());
+    if (ok) { (redo ? DB.undo : DB.redo).push(e); toast((redo ? "Újra: " : "Visszavonva: ") + e.label); dbRender(true); } else st.push(e);
+    return;
+  }
   try {
     DB.doc = await api("dbApply", redo ? e.ops : e.undo);
     (redo ? DB.undo : DB.redo).push(e);
@@ -199,7 +204,7 @@ function dbMatches(t) {
   if (!q) return true;
   const m = meta(tkey(t));
   if (tkey(t).toLowerCase().includes(q) || (m && m.desc && m.desc.toLowerCase().includes(q)) || (t.desc || "").toLowerCase().includes(q)) return true;
-  return t.columns.some(c => c.name.toLowerCase().includes(q) || ((colMeta(tkey(t), c.name) || {}).desc || "").toLowerCase().includes(q));
+  return t.columns.some(c => c.name.toLowerCase().includes(q) || (c.desc || "").toLowerCase().includes(q) || ((colMeta(tkey(t), c.name) || {}).desc || "").toLowerCase().includes(q));
 }
 
 function dbList() {
@@ -221,9 +226,9 @@ function dbList() {
     for (const t of b.tables) {
       const m = meta(tkey(t)) || {};
       list.append(h("div", { class: "dbv-item" + (nk(DB.sel) === nk(tkey(t)) ? " on" : "") + (t.gone ? " gone" : ""),
-        style: b.g ? { "--gc": b.g.color } : {}, title: m.desc || t.desc || "",
+        style: b.g ? { "--gc": b.g.color } : {}, title: (dbDescInDb() ? t.desc || m.desc : m.desc || t.desc) || "",
         onclick: () => dbSelect(tkey(t), true), ondblclick: () => dbOpenDetail(tkey(t)) },
-        h("div", { class: "nm" }, h("b", {}, t.name), h("span", {}, t.schema + (m.desc ? " · " + m.desc : ""))),
+        h("div", { class: "nm" }, h("b", {}, t.name), h("span", {}, t.schema + ((dbDescInDb() ? t.desc || m.desc : m.desc || t.desc) ? " · " + (dbDescInDb() ? t.desc || m.desc : m.desc || t.desc) : ""))),
         t.view ? h("span", { class: "badge view" }, "nézet") : null,
         m.new && !t.gone ? h("span", { class: "badge new" }, "új") : null,
         t.gone ? h("span", { class: "badge gone" }, "eltűnt") : null,
@@ -332,7 +337,7 @@ function dbEmptyState(v) {
   if (!v.configured) {
     box.append(h("div", { class: "card" },
       h("div", { class: "hero" }, h("div", { class: "db-ic" }, icon("db")), h("h2", {}, "Adatbázis-térkép"),
-        h("p", {}, "Adja meg a BI adatbázis elérését. A program csak olvas: lekéri a táblákat és mezőket, és – ha kéri – egy tábla sorait. Semmit nem ír az adatbázisba, és magától nem frissít.")),
+        h("p", {}, "Adja meg a BI adatbázis elérését. A program lekéri a táblákat és mezőket a leírásukkal, és – ha kéri – egy tábla sorait. Az adatokba nem ír, és magától nem frissít; a leírásokat a csapat saját eljárásával (meta.leiras_beallit) menti.")),
       h("div", { class: "card-b", style: { borderTop: "1px solid var(--border)" } }, dbConnForm(true))));
   } else {
     box.append(h("div", { class: "card" },
@@ -356,7 +361,7 @@ function dbCard(t, m, rel, match, faded) {
     style: Object.assign({ left: m.x + "px", top: m.y + "px" }, g ? { "--gc": g.color } : {}),
     "data-key": key,
   });
-  const desc = m.desc || t.desc;
+  const desc = dbDescInDb() ? t.desc || m.desc : m.desc || t.desc;
   card.append(h("div", { class: "ch", title: (desc ? desc + "\n\n" : "") + key + (t.rows >= 0 ? " · " + fmtRows(t.rows) : "") },
     t.view ? icon("eye") : icon("table"),
     h("div", { class: "tn" }, h("small", {}, t.schema + "."), t.name),
@@ -370,7 +375,7 @@ function dbCard(t, m, rel, match, faded) {
   for (const c of rows.cols) {
     const cm = colMeta(key, c.name) || {};
     const isFk = fkCols.has(nk(c.name));
-    card.append(h("div", { class: "cr", "data-col": c.name, title: c.name + "  " + c.type + (c.nullable ? " (NULL lehet)" : "") + (cm.desc ? "\n" + cm.desc : c.desc ? "\n" + c.desc : "") },
+    card.append(h("div", { class: "cr", "data-col": c.name, title: c.name + "  " + c.type + (c.nullable ? " (NULL lehet)" : "") + ((dbDescInDb() ? c.desc || cm.desc : cm.desc || c.desc) ? "\n" + (dbDescInDb() ? c.desc || cm.desc : cm.desc || c.desc) : "") },
       h("span", { class: "port l", "data-side": "l" }), h("span", { class: "port r", "data-side": "r" }),
       h("span", { class: "k" + (c.pk ? " pk" : isFk ? " fk" : "") }, c.pk ? icon("key") : isFk ? icon("link") : ""),
       h("span", { class: "cn" + (c.pk ? " pk" : "") }, c.name),
@@ -822,17 +827,27 @@ function dbRenderDetail(cv, editing) {
   const body = h("div", { class: "d-body" });
   p.append(body);
 
-  // description
-  body.append(h("div", { class: "section-t" }, "Leírás"));
-  const ta = h("textarea", { class: "input", placeholder: "Mit tartalmaz a tábla, honnan töltődik, mikor frissül, mire figyeljünk…" });
-  ta.value = m.desc || "";
-  ta.addEventListener("blur", () => {
-    const v = ta.value.trim();
-    if (v !== (m.desc || "")) dbDo([{ op: "tableDesc", table: key, text: v }], [{ op: "tableDesc", table: key, text: m.desc || "" }], "táblaleírás");
-  });
-  body.append(ta);
-  if (m.descBy) body.append(h("div", { class: "dbdesc" }, "Utoljára: " + m.descBy + (parseT(m.descAt) ? " · " + fmtDateTime(m.descAt) : "")));
-  if (t.desc) body.append(h("div", { class: "dbdesc" }, "Az adatbázisban: " + t.desc));
+  // description: in the database (team procedure) or – switched off – on the map only
+  const inDb = dbDescInDb();
+  body.append(h("div", { class: "section-t row" }, h("span", { class: "grow" }, "Leírás"),
+    inDb ? h("span", { class: "badge fk", title: "Az adatbázisban tárolva (MS_Description); mentés: " + dbDescProc() }, "adatbázisban") : null,
+    !t.gone ? h("button", { class: "btn sm ghost", style: { height: "22px", textTransform: "none", letterSpacing: 0 }, title: "A tábla és a mezők leírásának újraolvasása az adatbázisból", onclick: () => dbReadDesc(key) }, icon("refresh"), "Újraolvasás") : null));
+  const ta = h("textarea", { class: "input", placeholder: "Mit tartalmaz, melyik cégre vonatkozik, és mi egy sor (pl. „cikk × üzletág × időszak szinten egy sor”)", disabled: inDb && t.gone });
+  if (inDb) {
+    ta.value = t.desc || "";
+    ta.addEventListener("blur", () => { const v = ta.value.trim(), cur = dbCurDesc(key, ""); if (v !== cur) dbSaveDesc(key, "", v, cur, ta); });
+    body.append(ta);
+    if (m.desc && m.desc !== t.desc) body.append(dbOldDesc(m.desc, () => { ta.value = m.desc; dbSaveDesc(key, "", m.desc, t.desc || "", ta); }));
+  } else {
+    ta.value = m.desc || "";
+    ta.addEventListener("blur", () => {
+      const v = ta.value.trim();
+      if (v !== (m.desc || "")) dbDo([{ op: "tableDesc", table: key, text: v }], [{ op: "tableDesc", table: key, text: m.desc || "" }], "táblaleírás");
+    });
+    body.append(ta);
+    if (m.descBy) body.append(h("div", { class: "dbdesc" }, "Utoljára: " + m.descBy + (parseT(m.descAt) ? " · " + fmtDateTime(m.descAt) : "")));
+    if (t.desc) body.append(h("div", { class: "dbdesc" }, "Az adatbázisban: " + t.desc));
+  }
 
   // group
   const groups = DB.doc.groups || [];
@@ -844,16 +859,19 @@ function dbRenderDetail(cv, editing) {
   body.append(h("div", { class: "section-t" }, "Csoport"), sel);
 
   // columns
-  body.append(h("div", { class: "section-t" }, "Mezők (" + t.columns.length + ")"));
+  body.append(h("div", { class: "section-t row" }, h("span", { class: "grow" }, "Mezők (" + t.columns.length + ")"),
+    h("span", { class: "muted", style: { cursor: "help", textTransform: "none", letterSpacing: 0, fontWeight: 400 }, title: DESC_TIPS }, "ⓘ leírási szabályok")));
   const rels = dbRelations();
   const fkCols = new Set(rels.filter(r => nk(r.from) === nk(key)).map(r => nk(r.fromCol)));
   const cols = h("div", { class: "dbv-cols" });
   for (const c of t.columns) {
     const cm = colMeta(key, c.name) || {};
-    const inp = h("input", { placeholder: "Magyarázat hozzáadása…", value: cm.desc || "", title: cm.descBy ? "Utoljára: " + cm.descBy : "" });
-    inp.addEventListener("keydown", e => { if (e.key === "Enter") inp.blur(); });
+    const inp = h("input", { placeholder: "Leírás hozzáadása…", value: (inDb ? c.desc : cm.desc) || "", disabled: inDb && t.gone,
+      title: inDb ? "Az adatbázisban tárolt leírás – Enter vagy kilépés: mentés" : cm.descBy ? "Utoljára: " + cm.descBy : "" });
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = (inDb ? c.desc : cm.desc) || ""; inp.blur(); e.stopPropagation(); } });
     inp.addEventListener("blur", () => {
       const v = inp.value.trim();
+      if (inDb) { const cur = dbCurDesc(key, c.name); if (v !== cur) dbSaveDesc(key, c.name, v, cur, inp); return; }
       if (v !== (cm.desc || "")) dbDo([{ op: "colDesc", table: key, column: c.name, text: v }], [{ op: "colDesc", table: key, column: c.name, text: cm.desc || "" }], "mezőleírás: " + c.name);
     });
     const flags = [c.nullable ? "NULL lehet" : null, c.identity ? "identity" : null, c.computed ? "számított" : null].filter(Boolean).join(", ");
@@ -862,7 +880,8 @@ function dbRenderDetail(cv, editing) {
       h("span", { class: "n selectable" }, c.name, cm.new ? h("span", { class: "badge new", style: { marginLeft: "6px" } }, "új") : null),
       h("span", { class: "t", title: flags }, c.type + (c.nullable ? "?" : "")),
       h("div", { class: "ed" }, inp),
-      c.desc ? h("div", { class: "dbd" }, "Az adatbázisban: " + c.desc) : null));
+      !inDb && c.desc ? h("div", { class: "dbd" }, "Az adatbázisban: " + c.desc) : null,
+      inDb && cm.desc && cm.desc !== c.desc ? h("div", { class: "dbd" }, dbOldDesc(cm.desc, () => { inp.value = cm.desc; dbSaveDesc(key, c.name, cm.desc, c.desc || "", inp); })) : null));
   }
   body.append(cols);
 
@@ -898,6 +917,71 @@ function dbRenderDetail(cv, editing) {
   }
   body.scrollTop = scroll;
   p.classList.add("open");
+}
+
+const DESC_TIPS = "Tábla: mit tartalmaz, melyik cégre vonatkozik, és mi egy sor (pl. „cikk × üzletág × időszak szinten egy sor”).\n" +
+  "cikkszam: „Energofish cikkszám (a cikktörzs azonosítója)”.\n" +
+  "idoszak: ÉÉÉÉ.HH formátum (pl. 2026.10) – hóvégi pillanatkép vagy havi összesítés?\n" +
+  "Összeg: nettó/bruttó és pénznem. Mennyiség: mértékegység.\n" +
+  "Kódolt mező: példa értékekkel (pl. „1_NAGYKER, 9_KISKER”).";
+
+// the description as currently known (the panel may show an older copy)
+function dbCurDesc(key, col) {
+  const t = dbTable(key);
+  if (!t) return "";
+  if (!col) return t.desc || "";
+  const c = t.columns.find(x => nk(x.name) === nk(col));
+  return (c && c.desc) || "";
+}
+function dbDescInDb() { const c = DB.view && DB.view.conn; return !!c && c.descWrite !== "off"; }
+function dbDescProc() { const c = DB.view && DB.view.conn; return (c && c.descProc) || "meta.leiras_beallit"; }
+
+// a description that was written on the map before descriptions moved into the database
+function dbOldDesc(text, move) {
+  return h("div", { class: "dbdesc row", style: { gap: "6px", alignItems: "flex-start" } },
+    h("span", { class: "grow" }, "Korábbi, csak a térképen tárolt leírás: " + text),
+    h("button", { class: "btn sm", style: { height: "22px", flexShrink: 0 }, onclick: move }, "Átvitel"));
+}
+
+function dbApplyDescResult(r) {
+  const k = nk(tkey(r.table));
+  const i = DB.schema.tables.findIndex(t => nk(tkey(t)) === k);
+  if (i >= 0) DB.schema.tables[i] = r.table;
+  DB.schema.changed = r.changed;
+  if (r.doc) DB.doc = r.doc;
+}
+
+// writes one description with the team's procedure (EXEC … @sema, @tabla, @mezo, @leiras)
+async function dbSaveDesc(key, col, text, old, el, fromUndo) {
+  const label = (col ? "mezőleírás: " + col : "táblaleírás");
+  if (el) { el.classList.remove("saved"); el.classList.add("saving"); }
+  try {
+    const r = await api("dbSetDesc", { table: key, column: col, text });
+    dbApplyDescResult(r);
+    if (el) { el.classList.remove("saving"); el.classList.add("saved"); setTimeout(() => el.classList.remove("saved"), 1600); }
+    if (r.warning) toast(r.warning, true);
+    else if (!fromUndo) toast((col ? "Mezőleírás" : "Táblaleírás") + " mentve az adatbázisba.");
+    if (!fromUndo) {
+      DB.undo.push({ label, doFn: () => dbSaveDesc(key, col, text, old, null, true), undoFn: () => dbSaveDesc(key, col, old, text, null, true) });
+      DB.redo = [];
+    }
+    const focusInPanel = document.activeElement && document.activeElement.closest(".dbv-detail");
+    if (!focusInPanel) dbRender(true); else { dbDrawLines(); dbUpdateTools(); dbRenderSide(DB.mounted.firstChild, false); }
+    return true;
+  } catch (e) {
+    if (el) { el.classList.remove("saving"); el.value = old; }
+    fail(e);
+    return false;
+  }
+}
+
+async function dbReadDesc(key) {
+  try {
+    const r = await api("dbReadDesc", { table: key });
+    dbApplyDescResult(r);
+    dbRender(true);
+    toast("Leírások újraolvasva az adatbázisból.");
+  } catch (e) { fail(e); }
 }
 
 function dbSuggestions(t, rels) {
@@ -1033,7 +1117,7 @@ function dbGroupModal(g, preset) {
 // Used on the "Adatbázis" tab, in its settings dialog and on the Settings page.
 function dbConnForm(inline, onSaved) {
   const cur = (DB.view && DB.view.conn) || {};
-  const c = Object.assign({ server: "", database: "", auth: "windows", user: "", encrypt: "trust", timeoutSec: 30, maxRows: 100000 }, cur, { password: "", clearPassword: false });
+  const c = Object.assign({ server: "", database: "", auth: "windows", user: "", encrypt: "trust", timeoutSec: 30, maxRows: 100000, descWrite: "proc", descProc: "meta.leiras_beallit" }, cur, { password: "", clearPassword: false });
   const res = h("div");
   const field = (label, el, full, hint) => h("label", { class: "field" + (full ? " full" : "") }, label, el, hint ? h("span", { class: "small muted", style: { fontWeight: 400 } }, hint) : null);
   const inp = (key, ph, type) => h("input", { class: "input" + (key === "server" || key === "database" ? " mono" : ""), type: type || "text", placeholder: ph || "", value: c[key] == null ? "" : c[key],
@@ -1053,6 +1137,19 @@ function dbConnForm(inline, onSaved) {
   const enc = h("select", { class: "input", onchange: e => { c.encrypt = e.target.value; } },
     [["trust", "Titkosított, a szerver tanúsítványát elfogadja (belső hálózat)"], ["strict", "Titkosított, tanúsítvány-ellenőrzéssel"], ["off", "Csak a bejelentkezés titkosított (régi szerverek)"]]
       .map(([v, l]) => h("option", { value: v, selected: c.encrypt === v }, l)));
+  const procBox = h("div", { class: "field full" });
+  const drawProc = () => {
+    clear(procBox);
+    if (c.descWrite === "off") { procBox.append(h("span", { class: "small muted", style: { fontWeight: 400 } }, "A leírások csak olvashatók; a program semmit nem ír az adatbázisba.")); return; }
+    procBox.append("Leírást író tárolt eljárás",
+      h("input", { class: "input mono", value: c.descProc || "", placeholder: "meta.leiras_beallit", oninput: e => { c.descProc = e.target.value; } }),
+      h("span", { class: "small muted", style: { fontWeight: 400, lineHeight: 1.5 } },
+        "Mentéskor a program kizárólag ezt futtatja, paraméterezve: ", h("code", { class: "mono" }, "EXEC " + (c.descProc || "meta.leiras_beallit") + " @sema, @tabla, @mezo, @leiras"),
+        " (a tábla leírásánál @mezo = NULL). Más írási művelet nem fut."));
+  };
+  const descSeg = h("div", { class: "seg" }, [["proc", "Szerkeszthetők az adatbázisban"], ["off", "Csak olvasás"]].map(([v, l]) =>
+    h("button", { type: "button", class: c.descWrite === v ? "on" : "", onclick: e => { c.descWrite = v; $$("button", descSeg).forEach(b => b.classList.remove("on")); e.currentTarget.classList.add("on"); drawProc(); } }, l)));
+  drawProc();
   const busy = (btn, on) => { btn.disabled = on; };
   const show = (cls, ...content) => { clear(res).append(h("div", { class: "dbc-res " + cls }, ...content)); };
   const test = async e => {
@@ -1061,8 +1158,15 @@ function dbConnForm(inline, onSaved) {
     try {
       const i = await api("dbTest", c);
       const lines = [h("b", {}, "Sikeres kapcsolat. "), i.server + " · " + i.database + " · " + i.login + " · SQL Server " + i.serverVersion + " · " + i.tables + " tábla/nézet"];
-      if (i.canWrite) show("warn", ...lines, h("br"), h("br"), "Figyelem: ennek a felhasználónak írási joga is van. A program ettől még csak olvas, de biztonságosabb egy csak olvasási jogú (db_datareader) felhasználó.");
-      else show("ok", ...lines, h("br"), "A felhasználó csak olvasni tud – így ideális.");
+      let warn = false;
+      if (c.descWrite !== "off") {
+        lines.push(h("br"), h("br"), h("b", {}, "Leírások: "));
+        if (!i.descProcOk) { warn = true; lines.push("a(z) " + i.descProc + " eljárás nem található (vagy nincs rá jog) – a leírások mentése így nem fog működni."); }
+        else if (!i.descProcExec) { warn = true; lines.push("a(z) " + i.descProc + " eljárás megvan, de ennek a felhasználónak nincs EXECUTE joga rá – a leírások mentése így nem fog működni."); }
+        else lines.push("a(z) " + i.descProc + " eljárás elérhető, a leírások szerkeszthetők.");
+      }
+      if (i.canWrite) lines.push(h("br"), h("br"), "Ennek a felhasználónak az adatokra is van írási joga. A program ettől még csak a leírást író eljárást futtatja, de biztonságosabb egy csak olvasási jogú (db_datareader) felhasználó" + (c.descWrite !== "off" ? " + EXECUTE jog az eljárásra." : "."));
+      show(warn || i.canWrite ? "warn" : "ok", ...lines);
     } catch (err) { show("err", h("b", {}, "Nem sikerült: "), err.message || String(err)); } finally { busy(b, false); }
   };
   const save = async e => {
@@ -1086,9 +1190,11 @@ function dbConnForm(inline, onSaved) {
       userBox,
       field("Titkosítás", enc, true),
       field("Időkorlát (mp)", inp("timeoutSec", "30", "number"), false, "Szerkezet és első 100 sor."),
-      field("„Teljes tábla” legfeljebb", inp("maxRows", "100000", "number"), false, "sor (a gép memóriája miatt)")),
+      field("„Teljes tábla” legfeljebb", inp("maxRows", "100000", "number"), false, "sor (a gép memóriája miatt)"),
+      h("div", { class: "field full" }, "Tábla- és mezőleírások", descSeg),
+      procBox),
     h("div", { class: "small muted", style: { marginTop: "12px", lineHeight: 1.5 } },
-      "A program csak olvas: a tábla- és mezőlistát a rendszerkatalógusból kéri le, sorokat pedig csak akkor, ha az „Első 100 sor” vagy „Teljes tábla” gombot megnyomja. Semmit nem ír az adatbázisba."),
+      "Az adatokat a program csak olvassa: a tábla- és mezőlistát a rendszerkatalógusból kéri le, sorokat pedig csak akkor, ha az „Első 100 sor” vagy „Teljes tábla” gombot megnyomja. Az egyetlen írás a leírások mentése a fenti eljárással (kikapcsolható)."),
     res,
     h("div", { class: "row", style: { marginTop: "14px", justifyContent: inline ? "center" : "flex-end" } },
       h("button", { class: "btn", onclick: test }, icon("test"), "Kapcsolat tesztelése"),
@@ -1107,7 +1213,7 @@ function dbConnModal() {
 // card on the Settings page
 function dbSettingsCard() {
   const body = h("div", { class: "card-b" }, h("div", { class: "small muted" }, "Betöltés…"));
-  const card = h("div", { class: "card" }, h("div", { class: "card-h" }, icon("db"), h("h3", {}, "Adatbázis (csak olvasás)")), body);
+  const card = h("div", { class: "card" }, h("div", { class: "card-h" }, icon("db"), h("h3", {}, "Adatbázis")), body);
   api("dbLoad", {}).then(v => { DB.view = Object.assign({}, DB.view || {}, { conn: v.conn, configured: v.configured }); clear(body).append(dbConnForm(false)); }).catch(e => { clear(body).append(h("div", { class: "small", style: { color: "var(--missing)" } }, e.message || String(e))); });
   return card;
 }

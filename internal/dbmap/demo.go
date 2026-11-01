@@ -2,10 +2,17 @@ package dbmap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
+)
+
+var (
+	_ Source = (*Demo)(nil)
+	_ Source = (*MSSQL)(nil)
 )
 
 // Demo is an in-memory sample database (development server, tests and the
@@ -13,6 +20,68 @@ import (
 type Demo struct {
 	// Extra tables appear at the next Schema call (to try "new table").
 	Extra []Table
+
+	mu    sync.Mutex
+	descs map[string]string // Norm(schema.table)+"|"+Norm(column) → description
+	Calls []string          // procedure calls (tests)
+}
+
+func (d *Demo) tables() []Table {
+	out := append(append([]Table(nil), demoTables...), d.Extra...)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := range out {
+		t := &out[i]
+		t.Columns = append([]Column(nil), t.Columns...)
+		k := Norm(t.Key())
+		if v, ok := d.descs[k+"|"]; ok {
+			t.Desc = v
+		}
+		for j := range t.Columns {
+			if v, ok := d.descs[k+"|"+Norm(t.Columns[j].Name)]; ok {
+				t.Columns[j].Desc = v
+			}
+		}
+	}
+	return out
+}
+
+func (d *Demo) Descriptions(_ context.Context, schema, table string) (*Descs, error) {
+	for _, t := range d.tables() {
+		if Norm(t.Key()) == Norm(schema+"."+table) {
+			out := &Descs{Table: t.Desc, Columns: map[string]string{}}
+			for _, c := range t.Columns {
+				out.Columns[c.Name] = c.Desc
+			}
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("a(z) %s.%s tábla nem található az adatbázisban", schema, table)
+}
+
+func (d *Demo) SetDescription(_ context.Context, proc, schema, table, column, text string) error {
+	q, err := QuoteProc(proc)
+	if err != nil {
+		return err
+	}
+	var found *Table
+	for _, t := range d.tables() {
+		if Norm(t.Key()) == Norm(schema+"."+table) {
+			t := t
+			found = &t
+		}
+	}
+	if found == nil || (column != "" && found.Col(column) == nil) {
+		return errors.New("SQL Server: a megadott tábla vagy mező nem létezik")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.descs == nil {
+		d.descs = map[string]string{}
+	}
+	d.descs[Norm(schema+"."+table)+"|"+Norm(column)] = text
+	d.Calls = append(d.Calls, fmt.Sprintf("EXEC %s %q, %q, %q, N%q", q, schema, table, column, text))
+	return nil
 }
 
 func col(name, typ string, opts ...string) Column {
@@ -65,8 +134,7 @@ func (d *Demo) Info(context.Context) (ConnInfo, error) {
 func (d *Demo) Schema(context.Context) (*Schema, error) {
 	s := &Schema{Server: "DEMO", Database: "BI_DEMO", ServerVersion: "16.0 (bemutató)", FetchedAt: time.Now(), TookMs: 42}
 	base := time.Date(2024, 3, 1, 8, 0, 0, 0, time.UTC)
-	for i, t := range append(append([]Table(nil), demoTables...), d.Extra...) {
-		t.Columns = append([]Column(nil), t.Columns...)
+	for i, t := range d.tables() {
 		t.Created, t.Modified = base.AddDate(0, 0, i*3), base.AddDate(0, 3, i)
 		s.Tables = append(s.Tables, t)
 	}

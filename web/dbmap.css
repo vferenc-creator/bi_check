@@ -204,3 +204,8 @@
 .spin-ic { animation: dbspin 1s linear infinite; }
 @keyframes dbspin { to { transform: rotate(360deg); } }
 @media (max-width: 900px) { .dbv { grid-template-columns: 1fr; } .dbv-side { display: none; } .dbc-grid { grid-template-columns: 1fr; } }
+
+/* description saved into the database */
+.dbv-detail .saving { border-color: var(--waiting) !important; background: color-mix(in srgb, var(--waiting) 8%, var(--surface)) !important; }
+.dbv-detail .saved { border-color: var(--ok) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent) !important; transition: box-shadow .3s; }
+.dbv-detail .section-t.row { display: flex; align-items: center; gap: 6px; }

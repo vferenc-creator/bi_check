@@ -312,6 +312,13 @@ type DBSettings struct {
 	TimeoutSec int `json:"timeoutSec"`
 	// MaxRows: at most this many rows are loaded for "Teljes tábla".
 	MaxRows int `json:"maxRows"`
+	// DescWrite: "proc" (default) – table and column descriptions are
+	// edited in the database through DescProc; "off" – the program never
+	// writes (descriptions are only read).
+	DescWrite string `json:"descWrite"`
+	// DescProc: the procedure that writes a description, called as
+	// EXEC <DescProc> @sema, @tabla, @mezo (NULL = table), @leiras.
+	DescProc string `json:"descProc"`
 }
 
 // DefaultThunderbirdPort is the local port of the add-on API.
@@ -379,7 +386,7 @@ func DefaultSettings() Settings {
 			Quiet:      QuietHours{From: "22:00", To: "06:00"},
 		},
 		Thunderbird: ThunderbirdSettings{Port: DefaultThunderbirdPort, StaleMin: 15},
-		Database:    DBSettings{Auth: "windows", Encrypt: "trust", TimeoutSec: 30, MaxRows: 100000},
+		Database:    DBSettings{Auth: "windows", Encrypt: "trust", TimeoutSec: 30, MaxRows: 100000, DescWrite: "proc", DescProc: "meta.leiras_beallit"},
 		Items:       []Item{},
 	}
 }
@@ -407,6 +414,12 @@ func (s *Settings) Normalize() {
 	}
 	if s.Database.MaxRows < 100 || s.Database.MaxRows > 1_000_000 {
 		s.Database.MaxRows = d.Database.MaxRows
+	}
+	if s.Database.DescWrite != "off" {
+		s.Database.DescWrite = "proc"
+	}
+	if strings.TrimSpace(s.Database.DescProc) == "" {
+		s.Database.DescProc = d.Database.DescProc
 	}
 	if s.TimeoutSec < 1 {
 		s.TimeoutSec = d.TimeoutSec

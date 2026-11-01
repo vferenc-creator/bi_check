@@ -17,13 +17,23 @@ A térkép logikáját, a tárolást (két gép egyszerre) és a sornézegetőt 
 3. Ha az adatbázisban vannak `MS_Description` leírások, a részletpanelen „Az adatbázisban: …” sorként jelennek meg.
 4. Ha a lekérés után piros figyelmeztetés jön („Részben nem olvasható”), az a jogosultság hiányát jelzi (pl. sorok száma) – a térkép ettől működik.
 
-## 3. Sorok
+## 3. Leírások (meta.leiras_beallit)
+
+1. *Kapcsolat tesztelése*: a „Leírások” sor szerint az eljárás elérhető és futtatható.
+2. Egy táblán, amelynek SQL-ből már van leírása: a részletpanelen a *Leírás* és a mezők leírásai megjelennek.
+3. Írjon át egy mezőleírást (aposztróffal, ékezettel, pl. `Az ügyfél 'fő' címe`), Enter → zöld villanás, „Mezőleírás mentve az adatbázisba”.
+4. SSMS-ben ellenőrizze (a [docs/tabla_leirasok.md](tabla_leirasok.md) kiolvasó lekérdezésével), hogy pontosan ez a szöveg került be.
+5. SQL-ből módosítson egy leírást, majd a programban *Újraolvasás* → az új szöveg látszik.
+6. Ctrl+Z → a régi szöveg kerül vissza az adatbázisba.
+7. *Beállítások → Adatbázis → Csak olvasás*: a leírás mezőn kilépve nincs mentés (a régi, térképes működés), az adatbázis nem változik.
+
+## 4. Sorok
 
 1. Egy kisebb táblán *Első 100 sor*: a dátum, szám (decimal), szöveg, GUID (uniqueidentifier) és NULL értékek helyesen jelennek meg.
 2. Egy nagyobb táblán *Teljes tábla*: a betöltés közben számol („… sor betöltve”), *Megszakítás* működik.
 3. Szűrők: `>0`, `=2024-03` (dátum oszlopon), `üres`; rendezés oszlopfejlécre kattintva.
 
-## 4. Közös térkép (két gép, közös módban)
+## 5. Közös térkép (két gép, közös módban)
 
 1. Az A gépen: egy tábla leírása, egy mezőmagyarázat, egy kapcsolat (pont húzása mezőről mezőre), egy csoport.
 2. A B gépen ugyanarra az adatbázisra beállítva, az Adatbázis fül megnyitása után legfeljebb 20 mp-en belül megjelennek az A gép módosításai.

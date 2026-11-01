@@ -166,7 +166,7 @@ func TestOps(t *testing.T) {
 	if r := doc.Relations[0]; r.From != "fact.OnkoltsegHavi" || r.FromCol != "TermekID" || r.ID == "" {
 		t.Fatalf("names are taken from the database: %+v", r)
 	}
-	bad(Op{Op: "relAdd", Relation: &Relation{From: "fact.OnkoltsegHavi", FromCol: "TermekID", To: "dim.Termek", ToCol: "TermekID"}}) // duplicate
+	bad(Op{Op: "relAdd", Relation: &Relation{From: "fact.OnkoltsegHavi", FromCol: "TermekID", To: "dim.Termek", ToCol: "TermekID"}})  // duplicate
 	bad(Op{Op: "relAdd", Relation: &Relation{From: "fact.Ertekesites", FromCol: "PartnerID", To: "dim.Partner", ToCol: "PartnerID"}}) // FK exists
 	bad(Op{Op: "relAdd", Relation: &Relation{From: "fact.Ertekesites", FromCol: "Nincs", To: "dim.Partner", ToCol: "PartnerID"}})
 	ok(Op{Op: "groupSave", Group: &Group{Name: "Önköltség", Color: "#F2A531"}})
@@ -396,5 +396,36 @@ func TestDemoRows(t *testing.T) {
 	all, _ := d.Rows(context.Background(), sch.Find("dim.Partner"), 100000, nil)
 	if all.Total != 412 || all.Truncated {
 		t.Fatalf("%d %v", all.Total, all.Truncated)
+	}
+}
+
+func TestQuoteProc(t *testing.T) {
+	ok := map[string]string{"meta.leiras_beallit": "[meta].[leiras_beallit]", " leiras_beallit ": "[leiras_beallit]", "meta.leírás_beállít": "[meta].[leírás_beállít]"}
+	for in, want := range ok {
+		if got, err := QuoteProc(in); err != nil || got != want {
+			t.Fatalf("%q: %q %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"", "meta.x; DROP TABLE y", "a.b.c", "x'--", "[meta].[x]", "meta. x", "1abc", "meta.leiras beallit"} {
+		if _, err := QuoteProc(bad); err == nil {
+			t.Fatalf("%q must be refused", bad)
+		}
+	}
+}
+
+func TestDemoDescriptions(t *testing.T) {
+	d := &Demo{}
+	if err := d.SetDescription(context.Background(), DefaultDescProc, "dim", "partner", "nev", "A partner neve"); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := d.Descriptions(context.Background(), "dim", "Partner")
+	if err != nil || ds.Columns["Nev"] != "A partner neve" || ds.Table == "" {
+		t.Fatalf("%+v %v", ds, err)
+	}
+	if s := demoSchema(t, d); s.Find("dim.Partner").Col("Nev").Desc != "A partner neve" {
+		t.Fatal("the next structure fetch shows it too")
+	}
+	if err := d.SetDescription(context.Background(), DefaultDescProc, "dim", "Partner", "nincs", "x"); err == nil {
+		t.Fatal("unknown column")
 	}
 }

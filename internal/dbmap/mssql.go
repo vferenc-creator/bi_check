@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +22,39 @@ type Source interface {
 	// Rows reads at most limit rows of a table (limit+1 are asked for, to
 	// know whether there are more). progress is called now and then.
 	Rows(ctx context.Context, t *Table, limit int, progress func(n int)) (*Result, error)
+	// Descriptions re-reads the MS_Description of one table and its columns.
+	Descriptions(ctx context.Context, schema, table string) (*Descs, error)
+	// SetDescription writes one description – the only statement that
+	// changes anything: EXEC <proc> @sema, @tabla, @mezo (NULL = the
+	// table), @leiras, with parameters.
+	SetDescription(ctx context.Context, proc, schema, table, column, text string) error
 	Close() error
+}
+
+// Descs are the descriptions of one table as stored in the database.
+type Descs struct {
+	Table   string            `json:"table"`
+	Columns map[string]string `json:"columns"` // column name → description ("" = none)
+}
+
+// DefaultDescProc is the team's procedure that writes descriptions.
+const DefaultDescProc = "meta.leiras_beallit"
+
+var procRe = regexp.MustCompile(`^[\p{L}_][\p{L}\p{N}_@$#]{0,127}(\.[\p{L}_][\p{L}\p{N}_@$#]{0,127})?$`)
+
+// QuoteProc validates a procedure name ("meta.leiras_beallit") and returns
+// it bracket-quoted ("[meta].[leiras_beallit]"). Anything that is not a
+// plain one- or two-part name is refused.
+func QuoteProc(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if !procRe.MatchString(name) {
+		return "", fmt.Errorf("érvénytelen eljárásnév: %q (formátum: séma.eljárás, pl. %s)", name, DefaultDescProc)
+	}
+	parts := strings.Split(name, ".")
+	for i, p := range parts {
+		parts[i] = Quote(p)
+	}
+	return strings.Join(parts, "."), nil
 }
 
 // ConnInfo is shown after "Kapcsolat tesztelése".
@@ -34,6 +67,10 @@ type ConnInfo struct {
 	// CanWrite: the login could change data. The program still only reads,
 	// but a read-only login (db_datareader) is the safer setup.
 	CanWrite bool `json:"canWrite"`
+	// The description procedure: exists / may be executed by this login.
+	DescProc     string `json:"descProc,omitempty"`
+	DescProcOK   bool   `json:"descProcOk"`
+	DescProcExec bool   `json:"descProcExec"`
 }
 
 // Config of an MS SQL connection.
@@ -173,6 +210,87 @@ func (m *MSSQL) Info(parent context.Context) (ConnInfo, error) {
 	}
 	ci.CanWrite = writer.Int64 == 1 || owner.Int64 == 1 || perm.Int64 == 1
 	return ci, nil
+}
+
+// CheckProc tells whether the description procedure exists and may be run.
+func (m *MSSQL) CheckProc(parent context.Context, proc string) (exists, exec bool, err error) {
+	if _, err := QuoteProc(proc); err != nil {
+		return false, false, err
+	}
+	ctx, cancel := m.ctx(parent)
+	defer cancel()
+	var id, perm sql.NullInt64
+	if err := m.db.QueryRowContext(ctx, `SELECT OBJECT_ID(@p1, 'P'), HAS_PERMS_BY_NAME(@p1, 'OBJECT', 'EXECUTE')`, strings.TrimSpace(proc)).Scan(&id, &perm); err != nil {
+		return false, false, Friendly(err)
+	}
+	return id.Valid, perm.Int64 == 1, nil
+}
+
+// qTableDesc: the descriptions of one table and its columns (parameters
+// @sema, @tabla – the names are never put into the SQL text).
+const qTableDesc = `SELECT
+    CAST(tep.value AS NVARCHAR(4000)) AS tabla_leiras,
+    c.name                            AS mezo,
+    CAST(cep.value AS NVARCHAR(4000)) AS mezo_leiras
+FROM sys.objects t
+JOIN sys.columns c ON c.object_id = t.object_id
+LEFT JOIN sys.extended_properties tep
+       ON tep.class = 1 AND tep.major_id = t.object_id
+      AND tep.minor_id = 0 AND tep.name = 'MS_Description'
+LEFT JOIN sys.extended_properties cep
+       ON cep.class = 1 AND cep.major_id = t.object_id
+      AND cep.minor_id = c.column_id AND cep.name = 'MS_Description'
+WHERE t.type IN ('U','V') AND SCHEMA_NAME(t.schema_id) = @sema
+  AND t.name = @tabla
+ORDER BY c.column_id`
+
+// Descriptions re-reads the descriptions of one table.
+func (m *MSSQL) Descriptions(parent context.Context, schema, table string) (*Descs, error) {
+	ctx, cancel := m.ctx(parent)
+	defer cancel()
+	rows, err := m.db.QueryContext(ctx, qTableDesc, sql.Named("sema", schema), sql.Named("tabla", table))
+	if err != nil {
+		return nil, Friendly(err)
+	}
+	defer rows.Close()
+	d := &Descs{Columns: map[string]string{}}
+	n := 0
+	for rows.Next() {
+		var td, cd sql.NullString
+		var col string
+		if err := rows.Scan(&td, &col, &cd); err != nil {
+			return nil, Friendly(err)
+		}
+		d.Table = td.String
+		d.Columns[col] = cd.String
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, Friendly(err)
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("a(z) %s.%s tábla nem található az adatbázisban", schema, table)
+	}
+	return d, nil
+}
+
+// SetDescription runs the team's description procedure with parameters.
+// This is the only statement of the program that changes the database.
+func (m *MSSQL) SetDescription(parent context.Context, proc, schema, table, column, text string) error {
+	q, err := QuoteProc(proc)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := m.ctx(parent)
+	defer cancel()
+	var col any // NULL = the description of the table
+	if column != "" {
+		col = column
+	}
+	if _, err := m.db.ExecContext(ctx, "EXEC "+q+" @p1, @p2, @p3, @p4", schema, table, col, text); err != nil {
+		return Friendly(err)
+	}
+	return nil
 }
 
 const qColumns = `SELECT s.name, o.name, o.type, o.create_date, o.modify_date,
@@ -435,6 +553,8 @@ func Friendly(err error) error {
 			return fmt.Errorf("nincs olvasási jogosultság: %s", se.Message)
 		case 1222:
 			return errors.New("a tábla épp zárolva van (valószínűleg most töltődik) – próbálja újra kicsit később")
+		case 2812:
+			return fmt.Errorf("a leírást író tárolt eljárás nem található – ellenőrizze a nevét (Beállítások → Adatbázis): %s", se.Message)
 		}
 		return fmt.Errorf("SQL Server: %s", se.Message)
 	}

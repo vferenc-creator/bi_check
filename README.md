@@ -37,7 +37,7 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 5. [Állapotok](#állapotok)
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
-8. [Közös mód (csapat)](#közös-mód-csapat) · [E-mailek figyelése (Thunderbird)](#e-mailek-figyelése-thunderbird) · [Adatbázis-térkép](#adatbázis-térkép-ms-sql-csak-olvasás) · [Import/export](#importexport)
+8. [Közös mód (csapat)](#közös-mód-csapat) · [E-mailek figyelése (Thunderbird)](#e-mailek-figyelése-thunderbird) · [Adatbázis-térkép](#adatbázis-térkép-ms-sql) · [Import/export](#importexport)
 9. [Beállítások](#beállítások)
 10. [Hol tárolja az adatokat?](#hol-tárolja-az-adatokat)
 11. [Parancssori kapcsolók](#parancssori-kapcsolók)
@@ -316,15 +316,34 @@ A BI Monitor frissítésekor a telepített bővítmény is frissül (a Thunderbi
 
 **Biztonság:** a kapcsolat csak a saját gépen belül él (`127.0.0.1`, alapból a 47231-es port – nem nyit tűzfalat), minden kérésnek a párosító kulcsot kell hoznia, és böngészőből (weboldalról) nem érhető el. Új kulcs: *Beállítások → Thunderbird → Új kulcs* (utána a bővítményben is cserélni kell).
 
-## Adatbázis-térkép (MS SQL, csak olvasás)
+## Adatbázis-térkép (MS SQL)
 
-Az **Adatbázis** fülön a csapat BI adatbázisát (Microsoft SQL Server) lehet áttekinteni és dokumentálni: egy térképen látszik az összes tábla és nézet a mezőivel, a kulcsokkal és a táblák közötti kapcsolatokkal; a táblákhoz és mezőkhöz magyarázat írható, és bármelyik tábla sorai megnézhetők, szűrhetők.
+Az **Adatbázis** fülön a csapat BI adatbázisát (Microsoft SQL Server) lehet áttekinteni és dokumentálni: egy térképen látszik az összes tábla és nézet a mezőivel, a kulcsokkal és a táblák közötti kapcsolatokkal; a táblák és mezők **leírása az adatbázisból jön és ott szerkeszthető**, és bármelyik tábla sorai megnézhetők, szűrhetők.
 
-**A program csak olvas.** Az adatbázisba soha nem ír, és magától semmit nem kérdez le: csak akkor fordul a szerverhez, ha valaki megnyomja a *Szerkezet lekérése*, az *Első 100 sor* vagy a *Teljes tábla* gombot. A szerkezetet a rendszerkatalógusból (`sys.tables`, `sys.columns`, kulcsok, becsült sorszám, `MS_Description`) kéri le; sorokat csak `SELECT TOP (n) * FROM [séma].[tábla]` formában, és csak a lekért szerkezetben szereplő táblákra. Felhasználó által írt SQL nem fut.
+**Az adatokba a program nem ír**, és magától semmit nem kérdez le: csak akkor fordul a szerverhez, ha valaki megnyomja a *Szerkezet lekérése*, az *Első 100 sor*, a *Teljes tábla* vagy a leírás *Újraolvasás* gombját, illetve ha egy leírást elment. A szerkezetet a rendszerkatalógusból (`sys.tables`, `sys.columns`, kulcsok, becsült sorszám, `MS_Description`) kéri le; sorokat csak `SELECT TOP (n) * FROM [séma].[tábla]` formában, és csak a lekért szerkezetben szereplő táblákra. **Az egyetlen író utasítás a leírás mentése a csapat saját eljárásával** (lásd lent); felhasználó által írt SQL nem fut.
+
+### Leírások az adatbázisban
+
+A tábla- és mezőleírások az adatbázisban, `MS_Description` tulajdonságként vannak – ugyanott, ahova SQL-ből is írjátok ([szabályok és példák](docs/tabla_leirasok.md)). A program:
+
+- **kiolvassa** őket a *Szerkezet lekérése*-kor az összes táblára, a részletpanel *Újraolvasás* gombjával pedig egy táblára (a mezőkkel együtt) – a dokumentációban szereplő lekérdezéssel, paraméterezve (`@sema`, `@tabla`);
+- **a részletpanelen szerkeszthetővé teszi** őket: a tábla *Leírás* mezője és a mezők soraiban a leírások. Mentés: Enter vagy a mezőből kilépve (Esc: elvetés). Mentés közben a mező kék, utána egy pillanatra zöld; a változás visszavonható (Ctrl+Z – ilyenkor a régi szöveget írja vissza);
+- **mentéskor kizárólag ezt futtatja**, paraméterezve (nincs szövegösszefűzés, így az aposztróf és az ékezetes karakterek is biztonságosak):
+
+  ```sql
+  EXEC meta.leiras_beallit @sema, @tabla, @mezo, @leiras   -- @mezo = NULL: a tábla leírása
+  ```
+
+  majd visszaolvassa az adott tábla leírásait, és ha az adatbázisban nem az áll, amit beírtak, figyelmeztet. A tábla- és mezőnevek mindig a lekért szerkezetből jönnek (pontos írásmóddal), ismeretlen táblára/mezőre nem hív semmit;
+- közös módban a mentett leírás a másik gépen is megjelenik (az Adatbázis fül 20 mp-en belül frissül).
+
+*Beállítások → Adatbázis → Tábla- és mezőleírások*: **Szerkeszthetők az adatbázisban** (alap) vagy **Csak olvasás** (ekkor a program semmit nem ír). Az eljárás neve itt átírható (csak `séma.eljárás` formájú név fogadható el). A *Kapcsolat tesztelése* megmutatja, hogy az eljárás létezik-e, és van-e rá a felhasználónak `EXECUTE` joga. A leírási szabályok (mi kerüljön a tábla és a mezők leírásába) a *Mezők* címsor melletti ⓘ jelre mutatva is látszanak.
+
+Ha valaki a korábbi verzióban a térképre írt leírást (még nem az adatbázisba), az a mező alatt „Korábbi, csak a térképen tárolt leírás” sorként látszik egy *Átvitel* gombbal, amely beírja az adatbázisba.
 
 ### Beállítás
 
-*Beállítások → Adatbázis (csak olvasás)*, vagy az Adatbázis fülön a fogaskerék:
+*Beállítások → Adatbázis*, vagy az Adatbázis fülön a fogaskerék:
 
 | Mező | Példa / jelentés |
 |---|---|
@@ -335,7 +354,7 @@ Az **Adatbázis** fülön a csapat BI adatbázisát (Microsoft SQL Server) lehet
 | Időkorlát | a szerkezet és az első 100 sor lekérésére (mp) |
 | „Teljes tábla” legfeljebb | ennyi sort tölt be egy táblából (alap: 100 000; nagyon széles tábláknál a gép memóriája miatt kevesebbet) |
 
-A *Kapcsolat tesztelése* megmutatja a szervert, az adatbázist, a bejelentkezett felhasználót és a táblák számát, és **figyelmeztet, ha a felhasználónak írási joga is van** – a program ettől még csak olvas, de a legbiztonságosabb egy csak olvasási jogú (`db_datareader`) felhasználó vagy Windows-csoport.
+A *Kapcsolat tesztelése* megmutatja a szervert, az adatbázist, a bejelentkezett felhasználót, a táblák számát és a leírást író eljárás elérhetőségét, és **figyelmeztet, ha a felhasználónak az adatokra is van írási joga** – a program ettől még csak olvas (és a leírás-eljárást hívja), de a legbiztonságosabb egy csak olvasási jogú (`db_datareader`) felhasználó vagy Windows-csoport, `EXECUTE` joggal a `meta.leiras_beallit` eljárásra.
 
 Az SQL jelszó nem kerül a `settings.json`-ba: külön fájlban, a Windows saját titkosításával (DPAPI) tárolódik, és csak ugyanaz a Windows-felhasználó tudja visszafejteni. A kapcsolati beállítások gépenként (személyesen) tárolódnak.
 
@@ -349,7 +368,7 @@ Kipróbáláshoz a szerver mezőbe `(demo)` írható: ekkor egy beépített mint
 - **Csoportok:** színes területek a térképen (pl. *Önköltség*, *Értékesítés*, *Partnerelemzés*). *Csoport* gomb → név, szín és a táblák kipipálása; jobb klikk egy táblán → *Csoportba: …*. A csoport címkéjét húzva a csoport összes táblája mozog. A bal oldali lista csoportonként mutatja a táblákat.
 - **Jegyzetek:** öntapadós cetlik a térképen (dupla kattintás: szerkesztés, színváltás, törlés).
 - **Mozgatás:** üres területet húzva a térkép mozog, görgővel nagyít; a kártyák a fejlécüknél fogva húzhatók. *Elrendezés*: az összes tábla automatikus elrendezése csoportonként, a kapcsolódók egymás mellé. Minden módosítás **visszavonható** (Ctrl+Z / Ctrl+Y, vagy a jobb alsó gombok).
-- **Részletpanel** (kattintás egy táblára): a tábla leírása, csoportja, a mezők listája egyenként írható magyarázattal, a kapcsolatok és a javaslatok. Ha az adatbázisban már van `MS_Description` leírás, az is megjelenik.
+- **Részletpanel** (kattintás egy táblára): a tábla leírása, csoportja, a mezők listája a leírásukkal (az adatbázisban szerkeszthetők, lásd fent), a kapcsolatok és a javaslatok.
 - **Keresés:** a bal oldali mező táblanévben, mezőnévben és a magyarázatokban is keres, a térképen kiemeli a találatokat.
 
 ### Sorok megnézése
@@ -366,7 +385,7 @@ A szűrés és a rendezés a már betöltött sorokon, a gépen történik – a
 
 ### Közös térkép
 
-Közös módban a térkép (leírások, kapcsolatok, csoportok, jegyzetek, elrendezés és az utoljára lekért szerkezet) a közös mappa **külön almappájában** van: `adatbazis-terkep\<szerver>__<adatbázis>.json` és `.schema.json`. Így amit az egyik gépen leírnak vagy összekötnek, az a másikon is látszik (az Adatbázis fül 20 másodpercenként megnézi, változott-e). A módosítások apró lépésenként mentődnek, rövid zárolással, így ha ketten egyszerre dolgoznak, egyikük változtatása sem vész el. A közös riportlista fájljait (`bicheck.json`, `reports\`, `locks\`) ez a funkció nem érinti, és a régebbi programverziók sem zavarják. Ha a közös mappa épp nem érhető el, a gépen tárolt másolat látszik (módosítani ilyenkor nem lehet). Közös mód nélkül a térkép a gép helyi adatmappájában van.
+Közös módban a térkép (kapcsolatok, csoportok, jegyzetek, elrendezés és az utoljára lekért szerkezet a leírásokkal) a közös mappa **külön almappájában** van: `adatbazis-terkep\<szerver>__<adatbázis>.json` és `.schema.json`. Így amit az egyik gépen leírnak vagy összekötnek, az a másikon is látszik (az Adatbázis fül 20 másodpercenként megnézi, változott-e). A módosítások apró lépésenként mentődnek, rövid zárolással, így ha ketten egyszerre dolgoznak, egyikük változtatása sem vész el. A közös riportlista fájljait (`bicheck.json`, `reports\`, `locks\`) ez a funkció nem érinti, és a régebbi programverziók sem zavarják. Ha a közös mappa épp nem érhető el, a gépen tárolt másolat látszik (módosítani ilyenkor nem lehet). Közös mód nélkül a térkép a gép helyi adatmappájában van.
 
 ---
 
@@ -451,6 +470,7 @@ Egyszerre csak egy példány fut: a második indítás csak előhozza az elsőt.
 - **Adatbázis – „a bejelentkezés nem sikerült”:** Windows-bejelentkezésnél a bejelentkezett Windows-felhasználónak (vagy csoportjának) kell joga legyen a szerverhez és az adatbázishoz; SQL-felhasználónál a név/jelszó hibás. A *Kapcsolat tesztelése* megmutatja, ki próbált bejelentkezni.
 - **Adatbázis – „a szerver nem érhető el”:** a szerver neve, a példány (`SZERVER\PÉLDÁNY`) vagy a port (`SZERVER,1433`) hibás, vagy tűzfal/VPN zárja el. Nevesített példánynál az SQL Browser szolgáltatásnak futnia kell, különben portot kell megadni.
 - **Adatbázis – „titkosítási hiba”:** régi SQL Servernél válassza a *Titkosítás → Csak a bejelentkezés titkosított* lehetőséget; ha a szerver valódi tanúsítvánnyal rendelkezik, a *tanúsítvány-ellenőrzéssel* változat is használható.
+- **Adatbázis – „a leírást író tárolt eljárás nem található” / „EXECUTE permission denied”:** az eljárás neve (*Beállítások → Adatbázis*) nem egyezik, vagy a felhasználónak nincs `EXECUTE` joga rá. A *Kapcsolat tesztelése* mindkettőt ellenőrzi.
 - **Adatbázis – egyes részek nem látszanak (pl. sorok száma):** a felhasználónak nincs joga a katalógus egy részéhez; a térkép ettől működik, a lekérés után figyelmeztetés jelzi, mi maradt ki.
 - **Napló:** `%LOCALAPPDATA%\EnergofishMonitor\logs\monitor.log`.
 
@@ -480,7 +500,7 @@ internal/engine/     háttérütemező: mikor mit kell ellenőrizni, „Elérhet
 internal/notify/     értesítési szabályok (ismétlésgátlás, csendes időszak, összevonás)
 internal/store/      settings.json + history.db
 internal/mailwatch/  e-mail figyelés: a Thunderbird-bővítmény jelentései → ellenőrzési eredmény
-internal/dbmap/      adatbázis-térkép: MS SQL szerkezet és sorok (csak olvasás), térkép-dokumentum, közös tárolás, szűrés
+internal/dbmap/      adatbázis-térkép: MS SQL szerkezet és sorok (olvasás), leírások (csak a leírás-eljárással), térkép-dokumentum, közös tárolás, szűrés
 internal/secret/     jelszó tárolása Windows DPAPI-val
 internal/teamstore/  ★ közös mód: riportfájlok, zárolás, ütközéskezelés, offline gyorsítótár – párhuzamos tesztekkel
 internal/app/        platformfüggetlen alkalmazásmag + a felület RPC API-ja

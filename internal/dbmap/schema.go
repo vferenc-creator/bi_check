@@ -19,10 +19,13 @@ type Schema struct {
 	Database      string    `json:"database"`
 	ServerVersion string    `json:"serverVersion,omitempty"`
 	FetchedAt     time.Time `json:"fetchedAt"`
-	FetchedBy     string    `json:"fetchedBy,omitempty"`
-	TookMs        int64     `json:"tookMs"`
-	Tables        []Table   `json:"tables"`
-	FKs           []FK      `json:"fks"`
+	// Changed: last change of the stored structure – the fetch itself or a
+	// description written/re-read since (other computers reload on change).
+	Changed   time.Time `json:"changed,omitempty"`
+	FetchedBy string    `json:"fetchedBy,omitempty"`
+	TookMs    int64     `json:"tookMs"`
+	Tables    []Table   `json:"tables"`
+	FKs       []FK      `json:"fks"`
 	// Warnings: parts that could not be read (e.g. no permission for row
 	// counts) – the structure itself is still usable.
 	Warnings []string `json:"warnings,omitempty"`
@@ -61,6 +64,17 @@ type FK struct {
 	FromCols []string `json:"fromCols"`
 	To       string   `json:"to"`
 	ToCols   []string `json:"toCols"`
+}
+
+// Stamp identifies the version of a stored structure.
+func (s *Schema) Stamp() time.Time {
+	if s == nil {
+		return time.Time{}
+	}
+	if !s.Changed.IsZero() {
+		return s.Changed
+	}
+	return s.FetchedAt
 }
 
 // Key is "schema.name".
