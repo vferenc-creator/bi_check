@@ -249,13 +249,18 @@ function shortNum(n) {
 function dbRenderCanvas(cv, editing) {
   if (!cv._init) dbInitCanvas(cv);
   const v = DB.view;
-  $$(".dbv-empty", cv).forEach(e => e.remove());
   const world = cv.querySelector(".dbv-world");
   clear(world);
+  const empty = v && (!v.configured || !DB.schema);
+  // The empty state holds the connection form: the 20 s poll must not rebuild
+  // it while nothing changed, or the user's choices and typing are lost.
+  const sig = empty ? JSON.stringify([v.configured, v.conn, v.error || "", DB.busy]) : "";
+  const old = cv.querySelector(".dbv-empty");
+  if (old && (!empty || old._sig !== sig)) old.remove();
   if (!v) return;
-  if (!v.configured || !DB.schema) {
+  if (empty) {
     cv.querySelector(".dbv-tools.tl").style.display = cv.querySelector(".dbv-tools.br").style.display = cv.querySelector(".dbv-hint").style.display = "none";
-    cv.append(dbEmptyState(v));
+    if (!old || old._sig !== sig) { const box = dbEmptyState(v); box._sig = sig; cv.append(box); }
     dbRenderDetail(cv, editing);
     return;
   }

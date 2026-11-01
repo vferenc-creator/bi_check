@@ -76,3 +76,34 @@ func TestUpdateErrorKeepsOldState(t *testing.T) {
 		t.Fatal("failed update must not change settings")
 	}
 }
+
+// A settings file from an older version has an empty database connection
+// with Windows login: it gets the Energofish BI defaults (SQL user, no
+// password), while a connection the user set up is kept as it is.
+func TestOldSettingsGetDatabaseDefaults(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "settings.json")
+	old := `{"checkIntervalSec":60,"database":{"server":"","database":"","auth":"windows","encrypt":"trust","timeoutSec":30,"maxRows":100000}}`
+	if err := os.WriteFile(p, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := OpenSettings(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := st.Get().Database
+	if d.Server != "EF-BI" || d.Port != 1433 || d.Database != "Dashboard" || d.Auth != "sql" || d.User != "d.admin" {
+		t.Fatalf("defaults not applied: %+v", d)
+	}
+
+	own := `{"checkIntervalSec":60,"database":{"server":"MASIK","database":"Teszt","auth":"windows"}}`
+	if err := os.WriteFile(p, []byte(own), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st, err = OpenSettings(p); err != nil {
+		t.Fatal(err)
+	}
+	if d := st.Get().Database; d.Server != "MASIK" || d.Database != "Teszt" || d.Auth != "windows" || d.User != "" {
+		t.Fatalf("own connection changed: %+v", d)
+	}
+}
