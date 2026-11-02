@@ -238,7 +238,7 @@ let soon = null;
 messenger.folders.onFolderInfoChanged.addListener(folder => {
   const watched = cfg.folders
     ? cfg.folders.includes(BIM.folderKey(folder))
-    : [].concat(folder.specialUse || [], folder.type || []).includes("sent");
+    : [].concat(folder.specialUse || [], folder.type || []).includes("inbox");
   if (!watched) return;
   clearTimeout(soon);
   soon = setTimeout(scan, 20000);
@@ -260,7 +260,7 @@ messenger.runtime.onMessage.addListener(async msg => {
       await scan();
       return { state };
     case "folders":
-      return (await allFolders()).map(f => ({ key: f.key, label: f.label, account: f.account, sent: f.sent }));
+      return (await allFolders()).map(f => ({ key: f.key, label: f.label, account: f.account, sent: f.sent, inbox: f.inbox }));
     case "test":
       return api("/hello", {}, { port: msg.port, key: msg.key });
     case "openMessage":

@@ -15,7 +15,7 @@
       for (const f of folders || []) {
         const names = parents.concat(f.name || f.path);
         const special = [].concat(f.specialUse || [], f.type ? [f.type] : []);
-        out.push({ key: folderKey(f), folder: f, account: acc.name, label: names.join(" / "), sent: special.includes("sent"), special });
+        out.push({ key: folderKey(f), folder: f, account: acc.name, label: names.join(" / "), sent: special.includes("sent"), inbox: special.includes("inbox"), special });
         walk(acc, f.subFolders, names);
       }
     };
@@ -23,9 +23,9 @@
     return out;
   }
 
-  // Default selection: every "Sent" folder.
+  // Default selection: every Inbox ("Beérkezett üzenetek").
   function watchedFolders(all, keys) {
-    if (!keys) return all.filter(f => f.sent);
+    if (!keys) return all.filter(f => f.inbox);
     const set = new Set(keys);
     return all.filter(f => set.has(f.key));
   }

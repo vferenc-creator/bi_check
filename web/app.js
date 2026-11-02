@@ -925,7 +925,7 @@ async function openEditor(item, draft) {
   const nameInput = h("input", { class: "input mono", placeholder: "pl. sales_   vagy   riport_{yyyyMMdd}*.xlsx", spellcheck: false });
   // e-mail mode (Thunderbird add-on)
   const subjInput = h("input", { class: "input", placeholder: "pl. Napi értékesítési riport {yyyy.MM.dd}", spellcheck: false });
-  const mfolderInput = h("input", { class: "input", placeholder: "pl. BI riport / Elküldött  (üres: minden figyelt mappa)", spellcheck: false });
+  const mfolderInput = h("input", { class: "input", placeholder: "pl. BI riport / Beérkezett üzenetek  (üres: minden figyelt mappa)", spellcheck: false });
   const partyInput = h("input", { class: "input", placeholder: "pl. vezetes@energofish.hu", spellcheck: false });
   const composeMail = () => {
     it.mail = { subject: subjInput.value.trim(), folder: mfolderInput.value.trim(), party: partyInput.value.trim() };
@@ -1162,7 +1162,7 @@ async function openEditor(item, draft) {
     if (pathMode === "email") {
       const tbOn = S.settings && S.settings.thunderbird && S.settings.thunderbird.enabled;
       pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
-        "A BI Monitor Thunderbird-bővítménye a figyelt mappákban (alapból: Elküldött) keresi az ilyen tárgyú leveleket; a levél dátuma számít érkezésnek. ",
+        "A BI Monitor Thunderbird-bővítménye a figyelt mappákban (alapból: Beérkezett üzenetek) keresi az ilyen tárgyú leveleket; a levél dátuma számít érkezésnek. ",
         "Ha nincs benne ", h("code", {}, "*"), ", a megadott szöveget ", h("b", {}, "tartalmazó"), " tárgyak számítanak. Dátum: ", h("code", {}, "{yyyy.MM.dd}"), ", ", h("code", {}, "{yyyyMMdd}"),
         ", eltolással ", h("code", {}, "{yyyy.MM.dd:-1d}"), ". A kis- és nagybetű nem számít."),
         teamOn() ? h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } }, "Közös mód: az e-mailt minden gép ellenőrzi, ahol be van kapcsolva a Thunderbird-kapcsolat. Adja meg a mappánál a fiókot is (pl. ", h("code", {}, "BI riport / Elküldött"), ") – ahol ez a fiók nincs meg a Thunderbirdben, ott az elem „Ismeretlen” marad, és nem jelez tévesen.") : "",
@@ -2050,7 +2050,7 @@ async function drawThunderbird(card, row, sw) {
   const keyIn = h("input", { class: "input mono grow", readonly: true, value: st.key || "", onclick: e => e.target.select() });
   const body = h("div", { class: "card-b" },
     h("p", { class: "small muted", style: { marginTop: 0, lineHeight: 1.5 } },
-      "Az időzítve kiküldött riport-e-mailek figyelése: a BI Monitor Thunderbird-bővítménye ezen a gépen megnézi a levelezésben (alapból az Elküldött mappákban), hogy a várt tárgyú e-mail kiment-e. ",
+      "Az időzítve kiküldött riport-e-mailek figyelése: a BI Monitor Thunderbird-bővítménye ezen a gépen megnézi a levelezésben (alapból a Beérkezett üzenetek mappákban), hogy a várt tárgyú e-mail kiment-e. ",
       "Az e-mailes elemek a többi elemhez hasonlóan ütemezhetők és értesítenek (Új elem → E-mail)."),
     tbInstallBox(st, card),
     row("Thunderbird-kapcsolat", "Csak ezen a gépen érhető el (127.0.0.1). Mentés után lép életbe.",

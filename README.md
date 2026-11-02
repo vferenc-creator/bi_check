@@ -283,7 +283,7 @@ Az időzítve kiküldött riport-e-maileket (pl. a BI rendszer napi e-mailes rip
 
 **Beállítás (egyszer, azon a gépen, ahol a Thunderbird fut) – egy gombnyomás:**
 1. BI Monitor → *Beállítások → Thunderbird (e-mail figyelés)* → **Telepítés a Thunderbirdbe**. Ez bekapcsolja a kapcsolatot, és a bővítményt – a gép kapcsolati beállításaival (port, párosító kulcs) együtt – a Thunderbird alapértelmezett profiljába teszi (`<profil>\extensions\bimonitor@energofish.hu.xpi`).
-2. Indítsa el (ha fut: zárja be és indítsa újra) a Thunderbirdöt. A Thunderbird jelzi, hogy új kiegészítő került hozzá – **engedélyezze**. Kész: a bővítmény magától kapcsolódik, alapból minden fiók **Elküldött** mappáját figyeli (ez a bővítmény beállításaiban módosítható).
+2. Indítsa el (ha fut: zárja be és indítsa újra) a Thunderbirdöt. A Thunderbird jelzi, hogy új kiegészítő került hozzá – **engedélyezze**. Kész: a bővítmény magától kapcsolódik, alapból minden fiók **Beérkezett üzenetek** mappáját figyeli (ez a bővítmény beállításaiban módosítható, pl. az Elküldött mappára).
 
 A BI Monitor frissítésekor a telepített bővítmény is frissül (a Thunderbird következő indításakor). *Új kulcs* esetén a bővítmény is megkapja az újat.
 
@@ -304,7 +304,7 @@ A BI Monitor frissítésekor a telepített bővítmény is frissül (a Thunderbi
 
 **A bővítmény a Thunderbirdben**
 - Eszköztár-gomb (**BI Monitor**): a jelvényen a problémás e-mailek száma (`!` = nincs kapcsolat a BI Monitorral). Lenyitva: az e-mail figyelések állapota, az utolsó illeszkedő levél, **Megnyitás** (a levél megnyitása), **Részletek** (a BI Monitorban), *Keresés most*.
-- Beállítások: párosító kulcs, port, **figyelt mappák** (pl. egy fiók Beérkezett mappája az Elküldött helyett – a választólista is innen dolgozik), keresési gyakoriság (alapból 2 perc), és kérésre Thunderbird-értesítés is, ha egy e-mail kimaradt.
+- Beállítások: párosító kulcs, port, **figyelt mappák** (alapból minden fiók Beérkezett üzenetek mappája; pl. az Elküldött is bejelölhető – a választólista is innen dolgozik), keresési gyakoriság (alapból 2 perc), és kérésre Thunderbird-értesítés is, ha egy e-mail kimaradt.
 - Új levél a figyelt mappában → fél percen belül újrakeres. A BI Monitor *Ellenőrzés most* gombja is azonnali keresést kér.
 
 **A BI Monitorban:** az e-mailes elemek a listában ✉ jellel látszanak; a részletpanelen a megtalált levél, a legutóbbi illeszkedő levelek, és a **Thunderbird** gomb (megnyitja a levelet a Thunderbirdben).
