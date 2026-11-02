@@ -43,8 +43,17 @@ func ruleSuffix(r HolidayRule) string {
 	return ""
 }
 
-// Describe returns a short Hungarian, human readable summary of the spec.
+// Describe returns a short Hungarian, human readable summary of the spec
+// (further schedules joined with "; ").
 func (sp Spec) Describe() string {
+	out := sp.describeOne()
+	for _, a := range sp.Also {
+		out += "; " + a.describeOne()
+	}
+	return out
+}
+
+func (sp Spec) describeOne() string {
 	switch sp.Type {
 	case Hourly:
 		iv := sp.IntervalMinutes

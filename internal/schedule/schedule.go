@@ -20,6 +20,8 @@ type Schedule struct {
 
 	// hourly
 	from, to, interval int
+
+	also []*Schedule // further schedules (Spec.Also)
 }
 
 // maxScanDays bounds the search for the previous/next occurrence.
@@ -164,6 +166,19 @@ func Compile(spec Spec, cal *calendar.Calendar, loc *time.Location) (*Schedule, 
 	default:
 		return nil, fmt.Errorf("ismeretlen ütemezés típus: %q", spec.Type)
 	}
+	if len(spec.Also) > MaxAlso {
+		return nil, fmt.Errorf("legfeljebb %d további ütemezés adható meg", MaxAlso)
+	}
+	for i, a := range spec.Also {
+		if len(a.Also) > 0 {
+			return nil, fmt.Errorf("%d. ütemezés: további ütemezés nem ágyazható egymásba", i+2)
+		}
+		sub, err := Compile(a, cal, loc)
+		if err != nil {
+			return nil, fmt.Errorf("%d. ütemezés: %w", i+2, err)
+		}
+		s.also = append(s.also, sub)
+	}
 	return s, nil
 }
 
@@ -289,8 +304,19 @@ func (s *Schedule) hourlyDayOK(d calendar.Date) bool {
 }
 
 // occurrencesOn returns the sorted, de-duplicated expected instants whose
-// wall-clock date is d.
+// wall-clock date is d – of this schedule and its further schedules.
 func (s *Schedule) occurrencesOn(d calendar.Date) []time.Time {
+	out := s.ownOccurrencesOn(d)
+	if len(s.also) == 0 {
+		return out
+	}
+	for _, a := range s.also {
+		out = append(out, a.ownOccurrencesOn(d)...)
+	}
+	return sortUniq(out)
+}
+
+func (s *Schedule) ownOccurrencesOn(d calendar.Date) []time.Time {
 	var out []time.Time
 	if s.spec.Type == Hourly {
 		end := s.to
@@ -318,6 +344,10 @@ func (s *Schedule) occurrencesOn(d calendar.Date) []time.Time {
 			out = append(out, s.wall(d, m))
 		}
 	}
+	return sortUniq(out)
+}
+
+func sortUniq(out []time.Time) []time.Time {
 	if len(out) < 2 {
 		return out
 	}
@@ -363,10 +393,14 @@ func (s *Schedule) wall(d calendar.Date, minute int) time.Time {
 }
 
 func (s *Schedule) scanDays() int {
+	n := maxScanDays
 	if s.spec.Type == Cron {
-		return maxScanDaysCron
+		n = maxScanDaysCron
 	}
-	return maxScanDays
+	for _, a := range s.also {
+		n = max(n, a.scanDays())
+	}
+	return n
 }
 
 // Prev returns the latest expected instant at or before now.

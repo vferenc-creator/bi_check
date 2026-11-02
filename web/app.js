@@ -745,7 +745,33 @@ function subjectTemplate(subject) {
   return subject;
 }
 
-// Guesses the schedule from the send times of the same report.
+// Guesses the schedules from the send times of the same report: sends
+// close in time (within 45 minutes) form one schedule; a report sent at
+// several times of day (e.g. 07:50 and 14:27) gets several, each with its
+// own days. Rare stray sends are ignored.
+function inferSchedules(dates) {
+  const sorted = [...dates].sort((a, b) => (a.getHours() * 60 + a.getMinutes()) - (b.getHours() * 60 + b.getMinutes()));
+  const mins = d => d.getHours() * 60 + d.getMinutes();
+  const clusters = [];
+  for (const d of sorted) {
+    const c = clusters[clusters.length - 1];
+    if (c && mins(d) - mins(c[c.length - 1]) <= 45) c.push(d); else clusters.push([d]);
+  }
+  const big = clusters.filter(c => c.length >= Math.max(2, dates.length * 0.08));
+  const use = big.length ? big : [clusters.reduce((a, b) => (b.length > a.length ? b : a))];
+  const specs = use.map(inferSchedule);
+  // same days and type → one schedule with several times
+  const out = [];
+  for (const sp of specs) {
+    const same = out.find(o => { const a = Object.assign({}, o, { times: [] }), b = Object.assign({}, sp, { times: [] }); return JSON.stringify(a) === JSON.stringify(b); });
+    if (same) { same.times = [...new Set([...same.times, ...sp.times])].sort(); } else out.push(sp);
+  }
+  const main = out[0];
+  if (out.length > 1) main.also = out.slice(1);
+  return main;
+}
+
+// Guesses one schedule from the send times of the same report.
 function inferSchedule(dates) {
   const mins = dates.map(d => d.getHours() * 60 + d.getMinutes()).sort((a, b) => a - b);
   const med = mins[Math.floor(mins.length / 2)];
@@ -756,8 +782,11 @@ function inferSchedule(dates) {
   const md = new Set(dates.map(d => d.getDate()));
   const months = new Set(dates.map(d => d.getFullYear() * 12 + d.getMonth()));
   if (md.size === 1 && months.size >= 2) return { type: "monthly", monthlyMode: "day", monthDay: dates[0].getDate(), times: [t] };
-  if (wd.size === 1) return { type: "weekly", weekdays: [((dates[0].getDay() + 6) % 7) + 1], times: [t] };
-  if (![...wd].some(d => d === 0 || d === 6) && wd.size >= 3) return { type: "workdays", times: [t], useHolidays: true };
+  const iso = [...wd].map(d => ((d + 6) % 7) + 1).sort();
+  if (wd.size === 1) return { type: "weekly", weekdays: iso, times: [t] };
+  if (wd.size === 5 && !wd.has(0) && !wd.has(6)) return { type: "workdays", times: [t], useHolidays: true };
+  // some weekdays only (e.g. Monday–Thursday), seen at least twice each
+  if (wd.size < 7 && dates.length >= wd.size * 2) return { type: "weekly", weekdays: iso, times: [t] };
   return { type: "daily", times: [t] };
 }
 
@@ -896,7 +925,7 @@ async function openEditor(item, draft) {
   const nameInput = h("input", { class: "input mono", placeholder: "pl. sales_   vagy   riport_{yyyyMMdd}*.xlsx", spellcheck: false });
   // e-mail mode (Thunderbird add-on)
   const subjInput = h("input", { class: "input", placeholder: "pl. Napi értékesítési riport {yyyy.MM.dd}", spellcheck: false });
-  const mfolderInput = h("input", { class: "input", placeholder: "pl. BI riport / Elküldött  (üres: minden figyelt mappa)", spellcheck: false });
+  const mfolderInput = h("input", { class: "input", placeholder: "pl. BI riport / Beérkezett üzenetek  (üres: minden figyelt mappa)", spellcheck: false });
   const partyInput = h("input", { class: "input", placeholder: "pl. vezetes@energofish.hu", spellcheck: false });
   const composeMail = () => {
     it.mail = { subject: subjInput.value.trim(), folder: mfolderInput.value.trim(), party: partyInput.value.trim() };
@@ -945,27 +974,51 @@ async function openEditor(item, draft) {
   // ---- picking the e-mail from the latest messages of the watched folders
   function mailPicker() {
     const box = h("div", { class: "mail-pick" });
+    // a searchable list: typing filters by subject, folder and sender
+    const fold = x => (x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const draw = (state, data) => {
-      const sel = h("select", { class: "input grow", disabled: state !== "ok", onchange: e => {
-        const g = groups[+e.target.value];
-        if (g) applyPick(g);
-      } });
-      let groups = [];
-      if (state === "loading") sel.append(h("option", {}, "A Thunderbird legutóbbi leveleinek betöltése…"));
-      else if (state === "error") sel.append(h("option", {}, "A lista nem érhető el"));
-      else {
+      let groups = [], shown = [], active = -1;
+      const search = h("input", { class: "input grow", disabled: state !== "ok", autocomplete: "off", spellcheck: false,
+        placeholder: state === "loading" ? "A Thunderbird legutóbbi leveleinek betöltése…" : state === "error" ? "A lista nem érhető el" : "" });
+      const list = h("div", { class: "mail-list", hidden: true });
+      const multiFolder = () => new Set(groups.map(g => g.where)).size > 1;
+      const fill = () => {
+        const words = fold(search.value).split(/\s+/).filter(Boolean);
+        shown = groups.filter(g => { const hay = fold(g.template + " " + g.where + " " + g.newest.subject); return words.every(w => hay.includes(w)); });
+        active = shown.length ? 0 : -1;
+        clear(list);
+        if (!shown.length) list.append(h("div", { class: "mail-empty" }, "Nincs ilyen levél a listában."));
+        shown.slice(0, 300).forEach((g, i) => list.append(h("div", { class: "mail-opt" + (i === active ? " on" : ""), title: g.where + " · " + g.newest.subject,
+          onmousedown: e => { e.preventDefault(); pick(i); } },
+          h("span", { class: "t" }, g.template),
+          h("span", { class: "m" }, (g.count > 1 ? g.count + " db, utolsó: " : "") + fmtDateTime(g.newest.date) + (multiFolder() ? " · " + g.where : "")))));
+      };
+      const mark = () => $$(".mail-opt", list).forEach((el, i) => { el.classList.toggle("on", i === active); if (i === active) el.scrollIntoView({ block: "nearest" }); });
+      const open = () => { if (state !== "ok") return; fill(); list.hidden = false; };
+      const pick = i => { const g = shown[i]; if (!g) return; list.hidden = true; search.value = ""; search.blur(); applyPick(g); };
+      search.addEventListener("focus", open);
+      search.addEventListener("click", open);
+      search.addEventListener("input", () => { list.hidden = false; fill(); });
+      search.addEventListener("blur", () => { list.hidden = true; });
+      search.addEventListener("keydown", e => {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          if (list.hidden) return open();
+          active = Math.max(0, Math.min(Math.min(shown.length, 300) - 1, active + (e.key === "ArrowDown" ? 1 : -1)));
+          mark();
+        } else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (!list.hidden) pick(active); }
+        else if (e.key === "Escape" && !list.hidden) { e.preventDefault(); e.stopPropagation(); list.hidden = true; }
+      });
+      if (state === "ok") {
         groups = groupMails(data.messages);
-        sel.append(h("option", { value: "" }, groups.length ? "— Válasszon a legutóbbi e-mailek közül (" + groups.length + " féle) —" : "Nincs levél a figyelt mappákban"));
-        const multiFolder = new Set(groups.map(g => g.where)).size > 1;
-        groups.forEach((g, i) => sel.append(h("option", { value: i, title: g.where + " · " + g.newest.subject },
-          g.template + "  ·  " + (g.count > 1 ? g.count + " db, utolsó: " : "") + fmtDateTime(g.newest.date) + (multiFolder ? "  ·  " + g.where : ""))));
+        search.placeholder = groups.length ? "Keresés a legutóbbi e-mailek között (" + groups.length + " féle) – pl. raktárközi" : "Nincs levél a figyelt mappákban";
       }
       clear(box).append(h("label", { class: "field" }, "Választás a legutóbbi e-mailek közül",
-        h("div", { class: "row" }, sel,
+        h("div", { class: "row" }, h("div", { class: "mail-combo grow" }, icon("search"), search, list),
           h("button", { class: "btn", title: "Lista frissítése a Thunderbirdből", disabled: state === "loading", onclick: () => load(true) }, icon("refresh")))),
         state === "error" ? h("div", { class: "small", style: { color: "var(--missing)", marginTop: "4px" } }, data) : "",
         state === "ok" ? h("div", { class: "small muted", style: { marginTop: "4px" } },
-          "A Thunderbird-bővítmény figyelt mappáiból (" + ((data.folders || []).join(", ") || "–") + "), az elmúlt 45 nap. " +
+          "A Thunderbird-bővítmény figyelt mappáiból (" + ((data.folders || []).join(", ") || "–") + "), az elmúlt 45 nap. Gépeljen a kereséshez; ↑/↓ és Enter is működik. " +
           (data.fresh ? "" : "Régebbi lista (" + fmtDateTime(data.at, true) + ") – a Thunderbird most nem válaszolt.")) : "");
     };
     const load = async force => {
@@ -999,7 +1052,7 @@ async function openEditor(item, draft) {
     const keep = { group: it.group, owner: it.owner };
     suggestFromMail(it, { subject: m.subject, folder: m.folder, account: m.account, date: m.date });
     // the schedule editor works on the original object: replace its content
-    let ns = inferSchedule(g.dates);
+    let ns = inferSchedules(g.dates);
     // a monthly report (month in the subject) seen only once or twice
     if (g.dates.length < 3 && g.template.includes("{yyyy.MM}")) ns = { type: "monthly", monthlyMode: "day", monthDay: new Date(m.date).getDate(), times: ns.times };
     for (const k of Object.keys(sp)) delete sp[k];
@@ -1109,7 +1162,7 @@ async function openEditor(item, draft) {
     if (pathMode === "email") {
       const tbOn = S.settings && S.settings.thunderbird && S.settings.thunderbird.enabled;
       pathHelp.append(h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } },
-        "A BI Monitor Thunderbird-bővítménye a figyelt mappákban (alapból: Elküldött) keresi az ilyen tárgyú leveleket; a levél dátuma számít érkezésnek. ",
+        "A BI Monitor Thunderbird-bővítménye a figyelt mappákban (alapból: Beérkezett üzenetek) keresi az ilyen tárgyú leveleket; a levél dátuma számít érkezésnek. ",
         "Ha nincs benne ", h("code", {}, "*"), ", a megadott szöveget ", h("b", {}, "tartalmazó"), " tárgyak számítanak. Dátum: ", h("code", {}, "{yyyy.MM.dd}"), ", ", h("code", {}, "{yyyyMMdd}"),
         ", eltolással ", h("code", {}, "{yyyy.MM.dd:-1d}"), ". A kis- és nagybetű nem számít."),
         teamOn() ? h("div", { class: "small muted", style: { marginTop: "6px", lineHeight: 1.5 } }, "Közös mód: az e-mailt minden gép ellenőrzi, ahol be van kapcsolva a Thunderbird-kapcsolat. Adja meg a mappánál a fiókot is (pl. ", h("code", {}, "BI riport / Elküldött"), ") – ahol ez a fiók nincs meg a Thunderbirdben, ott az elem „Ismeretlen” marad, és nem jelez tévesen.") : "",
@@ -1153,7 +1206,7 @@ async function openEditor(item, draft) {
     return box;
   }
 
-  function timesEditor() {
+  function timesEditor(sp) {
     if (!sp.times) sp.times = [];
     const box = h("div", { class: "row wrap" });
     const draw = () => {
@@ -1166,7 +1219,7 @@ async function openEditor(item, draft) {
     draw();
     return field("Időpont(ok)", box);
   }
-  function dayPicker() {
+  function dayPicker(sp) {
     if (!sp.weekdays) sp.weekdays = [];
     const box = h("div", { class: "daypick" });
     const draw = () => {
@@ -1181,14 +1234,46 @@ async function openEditor(item, draft) {
     draw();
     return box;
   }
-  function holidayRule() {
+  function holidayRule(sp) {
     return field("Munkaszüneti napon", h("select", { class: "input", onchange: e => { sp.holidayRule = e.target.value; onChange(); } },
       [["", "nem számít (ugyanúgy elvárt)"], ["skip", "nincs elvárás"], ["next", "a következő munkanapra tolódik"], ["prev", "az előző munkanapra kerül"]]
         .map(([v, l]) => h("option", { value: v, selected: (sp.holidayRule || "") === v }, l))));
   }
 
+  // One item may have several schedules with their own days and times
+  // (e.g. 07:50 and 10:35 Monday–Friday, 14:27 Monday–Thursday): the first
+  // is the item's schedule, the others are in its "also" list.
   function renderSchedule() {
     clear(schedBox);
+    const all = [sp, ...(sp.also || [])];
+    all.forEach((s, i) => {
+      const box = h("div", { class: all.length > 1 ? "sched-block" : "" });
+      if (all.length > 1) box.append(h("div", { class: "sched-head" }, h("b", {}, (i + 1) + ". ütemezés"), h("div", { class: "grow" }),
+        h("button", { class: "btn sm icon ghost", title: "Ütemezés törlése", onclick: () => removeSched(i) }, icon("trash"))));
+      specEditor(s, box);
+      schedBox.append(box);
+    });
+    if (all.length <= 20) schedBox.append(h("div", { class: "row wrap", style: { marginTop: "10px", gap: "8px" } },
+      h("button", { class: "btn sm", onclick: addSched }, icon("plus"), "További ütemezés"),
+      h("span", { class: "small muted" }, "ha egy riport több időpontban, más-más napokon érkezik (pl. 7:50 H–P, 14:27 H–Cs)")));
+  }
+  function addSched() {
+    const last = (sp.also && sp.also.length ? sp.also[sp.also.length - 1] : sp);
+    const days = last.type === "weekly" ? [...(last.weekdays || [1, 2, 3, 4, 5])] : [1, 2, 3, 4, 5];
+    sp.also = [...(sp.also || []), { type: "weekly", weekdays: days, times: ["12:00"] }];
+    renderSchedule(); onChange();
+  }
+  function removeSched(i) {
+    const rest = [...(sp.also || [])];
+    if (i === 0) { // the second becomes the first
+      const first = rest.shift();
+      for (const k of Object.keys(sp)) delete sp[k];
+      Object.assign(sp, first);
+    } else rest.splice(i - 1, 1);
+    if (rest.length) sp.also = rest; else delete sp.also;
+    renderSchedule(); onChange();
+  }
+  function specEditor(sp, schedBox) {
     schedBox.append(h("div", { class: "seg", style: { marginBottom: "12px" } },
       SCHED_TYPES.map(([v, l]) => h("button", { class: sp.type === v ? "on" : "", onclick: () => {
         sp.type = v;
@@ -1214,17 +1299,17 @@ async function openEditor(item, draft) {
         if (!sp.to) sp.to = "23:59";
         g.append(h("div", { class: "field" }, "Első időpont (kezdés)", timeField(sp.from, v => { sp.from = v; onChange(); }), h("span", { class: "hint" }, "pl. 06:00, vagy 00:15 = minden óra 15. percében")));
         g.append(h("div", { class: "field" }, "Utolsó időpont (vége)", timeField(sp.to, v => { sp.to = v; onChange(); }), h("span", { class: "hint" }, "ha korábbi a kezdésnél, átnyúlik éjfélen")));
-        if (sp.days === "custom") schedBox.append(h("div", { style: { marginTop: "12px" } }, field("Kiválasztott napok", dayPicker())));
+        if (sp.days === "custom") schedBox.append(h("div", { style: { marginTop: "12px" } }, field("Kiválasztott napok", dayPicker(sp))));
         break;
       }
       case "daily":
-        g.append(timesEditor(), holidayRule());
+        g.append(timesEditor(sp), holidayRule(sp));
         break;
       case "weekly":
-        g.append(field("Napok", dayPicker()), holidayRule(), timesEditor());
+        g.append(field("Napok", dayPicker(sp)), holidayRule(sp), timesEditor(sp));
         break;
       case "workdays":
-        g.append(timesEditor(), h("div", { class: "field" }, "Munkaszüneti napok",
+        g.append(timesEditor(sp), h("div", { class: "field" }, "Munkaszüneti napok",
           h("div", { class: "ctrl-h" }, sw(sp, "useHolidays", "magyar ünnepek és áthelyezett munkanapok"))));
         break;
       case "monthly": {
@@ -1233,13 +1318,13 @@ async function openEditor(item, draft) {
           [["day", "a hónap N. napja"], ["firstWorkday", "első munkanap"], ["nthWorkday", "N. munkanap"], ["lastWorkday", "utolsó munkanap"], ["lastDay", "a hónap utolsó napja"]]
             .map(([v, l]) => h("option", { value: v, selected: (sp.monthlyMode || "day") === v }, l)))));
         if (needDay) g.append(field("N =", number(sp, "monthDay", { min: 1, max: 31 }), sp.monthlyMode === "day" ? "rövidebb hónapban az utolsó nap" : null));
-        g.append(timesEditor());
-        if (sp.monthlyMode === "day" || sp.monthlyMode === "lastDay" || !sp.monthlyMode) g.append(holidayRule());
+        g.append(timesEditor(sp));
+        if (sp.monthlyMode === "day" || sp.monthlyMode === "lastDay" || !sp.monthlyMode) g.append(holidayRule(sp));
         break;
       }
       case "cron":
         g.append(field("Cron kifejezés", h("input", { class: "input mono", value: sp.cron || "", oninput: e => { sp.cron = e.target.value; onChange(); }, spellcheck: false }),
-          "perc óra nap hónap hét_napja – pl. 0 6 * * 1-5 (hétköznap 6:00), */15 8-17 * * * , 30 7 1 * *"), holidayRule());
+          "perc óra nap hónap hét_napja – pl. 0 6 * * 1-5 (hétköznap 6:00), */15 8-17 * * * , 30 7 1 * *"), holidayRule(sp));
         break;
     }
   }
@@ -1965,7 +2050,7 @@ async function drawThunderbird(card, row, sw) {
   const keyIn = h("input", { class: "input mono grow", readonly: true, value: st.key || "", onclick: e => e.target.select() });
   const body = h("div", { class: "card-b" },
     h("p", { class: "small muted", style: { marginTop: 0, lineHeight: 1.5 } },
-      "Az időzítve kiküldött riport-e-mailek figyelése: a BI Monitor Thunderbird-bővítménye ezen a gépen megnézi a levelezésben (alapból az Elküldött mappákban), hogy a várt tárgyú e-mail kiment-e. ",
+      "Az időzítve kiküldött riport-e-mailek figyelése: a BI Monitor Thunderbird-bővítménye ezen a gépen megnézi a levelezésben (alapból a Beérkezett üzenetek mappákban), hogy a várt tárgyú e-mail kiment-e. ",
       "Az e-mailes elemek a többi elemhez hasonlóan ütemezhetők és értesítenek (Új elem → E-mail)."),
     tbInstallBox(st, card),
     row("Thunderbird-kapcsolat", "Csak ezen a gépen érhető el (127.0.0.1). Mentés után lép életbe.",

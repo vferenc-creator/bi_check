@@ -13,11 +13,11 @@ const accounts = [{
   ],
 }];
 
-test("folders: flatten, labels, default = sent folders", () => {
+test("folders: flatten, labels, default = inbox folders", () => {
   const all = BIM.flattenFolders(accounts);
   assert.deepStrictEqual(all.map(f => f.label), ["Beérkezett", "Elküldött", "Elküldött / Archív"]);
-  assert.deepStrictEqual(BIM.watchedFolders(all, null).map(f => f.key), ["a1:/Sent"]);
-  assert.deepStrictEqual(BIM.watchedFolders(all, ["a1:/INBOX"]).map(f => f.label), ["Beérkezett"]);
+  assert.deepStrictEqual(BIM.watchedFolders(all, null).map(f => f.key), ["a1:/INBOX"]);
+  assert.deepStrictEqual(BIM.watchedFolders(all, ["a1:/Sent"]).map(f => f.label), ["Elküldött"]);
 });
 
 test("rules: Go regex runs in JS, folder and party filters", () => {

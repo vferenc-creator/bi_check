@@ -92,7 +92,15 @@ type Spec struct {
 
 	// Cron expression: "min hour dom month dow" or @daily, @hourly, ...
 	Cron string `json:"cron,omitempty"`
+
+	// Also: further schedules of the same output with their own days and
+	// times (e.g. 07:50 Monday–Friday and 14:27 Monday–Thursday). The
+	// expected instants are the union of all. Nested Also is not allowed.
+	Also []Spec `json:"also,omitempty"`
 }
+
+// MaxAlso is the most further schedules one item may have.
+const MaxAlso = 20
 
 // parseClock parses "HH:MM" (also "H:MM") into minutes after midnight.
 func parseClock(s string) (int, error) {

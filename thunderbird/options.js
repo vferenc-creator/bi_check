@@ -24,8 +24,8 @@ function drawFolders(selected) {
     c.type = "checkbox";
     c.value = f.key;
     c.disabled = def;
-    c.checked = def ? f.sent : selected.includes(f.key);
-    l.append(c, document.createTextNode(" " + f.label + (f.sent ? "  (elküldött)" : "")));
+    c.checked = def ? f.inbox : selected.includes(f.key);
+    l.append(c, document.createTextNode(" " + f.label + (f.inbox ? "  (beérkezett)" : f.sent ? "  (elküldött)" : "")));
     box.append(l);
   }
 }
@@ -43,7 +43,7 @@ async function load() {
 
 $("defFolders").addEventListener("change", () => {
   const sel = [...document.querySelectorAll("#folders input:checked")].map(c => c.value);
-  drawFolders(sel.length ? sel : folders.filter(f => f.sent).map(f => f.key));
+  drawFolders(sel.length ? sel : folders.filter(f => f.inbox).map(f => f.key));
 });
 
 $("test").addEventListener("click", async () => {

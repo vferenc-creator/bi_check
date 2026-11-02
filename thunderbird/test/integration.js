@@ -48,8 +48,10 @@ const until = async (what, fn, ms = 15000) => {
     ],
     "f-in": [{ id: 201, subject: "Napi értékesítés " + ymd(today), author: "x@y.hu", recipients: [], date: today, folder: inbox }],
   };
-  // Installed from the BI Monitor: no own settings, the package carries config.json.
-  const storage = {};
+  // Installed from the BI Monitor: the package carries config.json (port,
+  // key). The user chose to watch the Sent folder (the default is the Inbox,
+  // see step 10).
+  const storage = { folders: ["a1:/Sent"] };
   let builtIn = { port, key: tb.key, issued: "2026-10-31T10:00:00Z" };
   const calls = { opened: [], notes: [], badge: [] };
   const listeners = {};
@@ -137,11 +139,11 @@ const until = async (what, fn, ms = 15000) => {
   console.log("8. legutóbbi levelek (Elküldött) →", rec.fresh, rec.messages.map(m => m.subject).join(" | "));
   assert.ok(rec.fresh && rec.messages.length === 3 && rec.messages.every(m => m.folder === "Elküldött"));
   assert.ok(rec.messages[0].date >= rec.messages[1].date, "newest first");
-  // The user watches the Inbox of that account instead of Sent.
-  storage.folders = ["a1:/INBOX"];
+  // Back to the default: every Inbox ("Beérkezett üzenetek").
+  delete storage.folders;
   await listeners.storage();
   rec = await rpc("recentMails", null);
-  console.log("9. figyelt mappa: Beérkezett →", rec.messages.map(m => m.account + " / " + m.folder + ": " + m.subject).join(" | "));
+  console.log("9. alapértelmezés: Beérkezett →", rec.messages.map(m => m.account + " / " + m.folder + ": " + m.subject).join(" | "));
   assert.ok(rec.messages.length === 1 && rec.messages[0].folder === "Beérkezett");
 
   await rpc("deleteItem", { id });
