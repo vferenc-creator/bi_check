@@ -871,9 +871,15 @@ function dbRenderDetail(cv, editing) {
   const cols = h("div", { class: "dbv-cols" });
   for (const c of t.columns) {
     const cm = colMeta(key, c.name) || {};
-    const inp = h("input", { placeholder: "Leírás hozzáadása…", value: (inDb ? c.desc : cm.desc) || "", disabled: inDb && t.gone,
+    // the whole description is shown: the box grows with the text
+    const inp = h("textarea", { rows: 1, placeholder: "Leírás hozzáadása…", disabled: inDb && t.gone, spellcheck: false,
       title: inDb ? "Az adatbázisban tárolt leírás – Enter vagy kilépés: mentés" : cm.descBy ? "Utoljára: " + cm.descBy : "" });
-    inp.addEventListener("keydown", e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = (inDb ? c.desc : cm.desc) || ""; inp.blur(); e.stopPropagation(); } });
+    inp.value = (inDb ? c.desc : cm.desc) || "";
+    dbAutoGrow(inp);
+    inp.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
+      if (e.key === "Escape") { inp.value = (inDb ? c.desc : cm.desc) || ""; dbFitText(inp); inp.blur(); e.stopPropagation(); }
+    });
     inp.addEventListener("blur", () => {
       const v = inp.value.trim();
       if (inDb) { const cur = dbCurDesc(key, c.name); if (v !== cur) dbSaveDesc(key, c.name, v, cur, inp); return; }
@@ -886,7 +892,7 @@ function dbRenderDetail(cv, editing) {
       h("span", { class: "t", title: flags }, c.type + (c.nullable ? "?" : "")),
       h("div", { class: "ed" }, inp),
       !inDb && c.desc ? h("div", { class: "dbd" }, "Az adatbázisban: " + c.desc) : null,
-      inDb && cm.desc && cm.desc !== c.desc ? h("div", { class: "dbd" }, dbOldDesc(cm.desc, () => { inp.value = cm.desc; dbSaveDesc(key, c.name, cm.desc, c.desc || "", inp); })) : null));
+      inDb && cm.desc && cm.desc !== c.desc ? h("div", { class: "dbd" }, dbOldDesc(cm.desc, () => { inp.value = cm.desc; dbFitText(inp); dbSaveDesc(key, c.name, cm.desc, c.desc || "", inp); })) : null));
   }
   body.append(cols);
 
@@ -974,7 +980,7 @@ async function dbSaveDesc(key, col, text, old, el, fromUndo) {
     if (!focusInPanel) dbRender(true); else { dbDrawLines(); dbUpdateTools(); dbRenderSide(DB.mounted.firstChild, false); }
     return true;
   } catch (e) {
-    if (el) { el.classList.remove("saving"); el.value = old; }
+    if (el) { el.classList.remove("saving"); el.value = old; if (el.tagName === "TEXTAREA") dbFitText(el); }
     fail(e);
     return false;
   }
@@ -1116,6 +1122,20 @@ function dbGroupModal(g, preset) {
         h("button", { class: "btn primary", onclick: save }, icon("check"), "Mentés"))));
   document.body.append(ov);
   name.focus();
+}
+
+// A one-line-looking textarea that grows to show its whole text (also when
+// the panel is resized or the text is set from code).
+// Only width changes refit (the height change itself must not loop).
+const dbGrowRO = typeof ResizeObserver === "function" ? new ResizeObserver(es => es.forEach(e => {
+  const w = Math.round(e.contentRect.width);
+  if (w !== e.target._w) { e.target._w = w; dbFitText(e.target); }
+})) : null;
+function dbFitText(ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; }
+function dbAutoGrow(ta) {
+  ta.addEventListener("input", () => dbFitText(ta));
+  if (dbGrowRO) dbGrowRO.observe(ta);
+  requestAnimationFrame(() => dbFitText(ta));
 }
 
 // ---- connection settings -------------------------------------------------------------

@@ -132,10 +132,10 @@
 .dbv-col .n { font-weight: 600; font-size: 13px; word-break: break-all; }
 .dbv-col .t { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .dbv-col .ed { grid-column: 2 / 4; }
-.dbv-col .ed input { width: 100%; border: 1px solid transparent; background: transparent; padding: 4px 6px; margin-left: -6px; border-radius: 7px; font-size: 12.5px; color: var(--text); }
-.dbv-col .ed input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
-.dbv-col .ed input:hover { border-color: var(--border); }
-.dbv-col .ed input:focus { border-color: var(--accent); outline: none; box-shadow: var(--focus); background: var(--surface); }
+.dbv-col .ed textarea { display: block; width: calc(100% + 6px); border: 1px solid transparent; background: transparent; padding: 4px 6px; margin-left: -6px; border-radius: 7px; font: inherit; font-size: 12.5px; line-height: 1.45; color: var(--text); resize: none; overflow: hidden; min-height: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dbv-col .ed textarea::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
+.dbv-col .ed textarea:hover { border-color: var(--border); }
+.dbv-col .ed textarea:focus { border-color: var(--accent); outline: none; box-shadow: var(--focus); background: var(--surface); }
 .dbv-col .dbd { grid-column: 2 / 4; font-size: 11.5px; color: var(--muted); }
 .dbv-rel { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 10px; font-size: 12.5px; }
 .dbv-rel:hover { background: var(--hover); }
