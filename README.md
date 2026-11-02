@@ -140,6 +140,8 @@ Minden számítás magyar idő (Europe/Budapest) szerint történik.
 | **Havonta** | a hónap N. napja / utolsó napja / első / N. / utolsó munkanapja | minden hónap első munkanapján 08:00 |
 | **Cron** | 5 mezős kifejezés (perc óra nap hónap hétnapja), `@daily`, `@hourly` | `0 6 * * 1-5`, `*/15 8-17 * * *` |
 
+**Több ütemezés egy elemhez:** a szerkesztőben a *További ütemezés* gombbal. Ez akkor kell, ha egy riport több időpontban, más-más napokon érkezik, például 07:50 és 10:35 hétfőtől péntekig, 14:27 viszont csak hétfőtől csütörtökig. Az azonos napokra eső időpontok egy ütemezésbe is felvehetők. Az elvárt időpontok az összes ütemezés együttese: pénteken 14:27-kor így nem jelez hiányt. A listában az ütemezések pontosvesszővel elválasztva látszanak.
+
 **Munkaszüneti napon** (napi, heti, havi „N. nap” és cron esetén): *nem számít* / *nincs elvárás* / *a következő munkanapra tolódik* / *az előző munkanapra kerül*.
 
 **Határesetek** (mindegyikre van unit teszt):
@@ -294,7 +296,7 @@ A BI Monitor frissítésekor a telepített bővítmény is frissül (a Thunderbi
 </details>
 
 **E-mail figyelés felvétele**
-- BI Monitor: *Új elem* → *Mit figyel?* → **E-mail** → **„Választás a legutóbbi e-mailek közül”** lenyíló lista: a bővítmény figyelt mappáinak (pl. az adott fiók Beérkezett vagy Elküldött mappája) elmúlt 45 napi levelei, az ismétlődő riportok egy sorba vonva („Napi értékesítési riport {yyyy.MM.dd} · 29 db, utolsó: tegnap 07:04”). Választáskor kitölti a tárgymintát (a dátumból token, eltolással, ha a levél pl. az előző napi adatot küldi), a fiókot és mappát, és a kiküldések alapján az ütemezést (munkanapokon / hetente / havonta / naponta, a szokásos időponttal). A lista a ⟳ gombbal frissíthető.
+- BI Monitor: *Új elem* → *Mit figyel?* → **E-mail** → **„Választás a legutóbbi e-mailek közül”** kereshető lista (gépeléssel szűr a tárgyra, a mappára és a fiókra; az ékezet és a kis- és nagybetű nem számít; ↑/↓ és Enter is működik): a bővítmény figyelt mappáinak (pl. az adott fiók Beérkezett vagy Elküldött mappája) elmúlt 45 napi levelei, az ismétlődő riportok egy sorba vonva („Napi értékesítési riport {yyyy.MM.dd} · 29 db, utolsó: tegnap 07:04”). Választáskor kitölti a tárgymintát (a dátumból token, eltolással, ha a levél pl. az előző napi adatot küldi), a fiókot és mappát, és a kiküldések alapján az ütemezést (munkanapokon / hetente / havonta / naponta, a szokásos időponttal). Ha a riport naponta több időpontban megy ki, a 45 percen belüli küldéseket egy időpontnak veszi, és mindegyik időponthoz a saját napjait ismeri fel. Például 07:50 és 10:35 munkanapokon, plusz 14:27 hétfőtől csütörtökig: ebből két ütemezés lesz. A lista a ⟳ gombbal frissíthető.
 - Vagy kézzel: a tárgy (minta), ha kell a mappa (pl. `BI riport / Elküldött`) és a feladó/címzett (pl. `vezetes@`).
 - Vagy a Thunderbirdben egy kiment levélen **jobb gomb → „BI Monitor: figyelés erre az e-mailre…”**: a BI Monitorban kitöltött szerkesztő nyílik meg – a tárgyban lévő dátumból token lesz (`Napi riport 2026.10.30` → `Napi riport {yyyy.MM.dd:-1d}`, ha a levél egy nappal később ment ki), az elvárt időpont a kiküldés ideje.
 

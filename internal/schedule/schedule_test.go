@@ -365,3 +365,41 @@ func TestDescribe(t *testing.T) {
 		t.Error("cron describe")
 	}
 }
+
+// One e-mail sent at several times with different days (07:50 and 10:35
+// Monday–Friday, 14:27 Monday–Thursday): the expected instants are the union.
+func TestFurtherSchedules(t *testing.T) {
+	sp := Spec{Type: Weekly, Weekdays: []int{1, 2, 3, 4, 5}, Times: []string{"07:50", "10:35"},
+		Also: []Spec{{Type: Weekly, Weekdays: []int{1, 2, 3, 4}, Times: []string{"14:27"}}}}
+	s := compile(t, sp)
+	// 2026-11-05 is a Thursday, 11-06 a Friday
+	got := []string{}
+	for _, x := range s.Between(at("2026-11-05 00:00"), at("2026-11-09 08:00"), 20) {
+		got = append(got, x.In(bud).Format("01-02 15:04"))
+	}
+	want := "11-05 07:50,11-05 10:35,11-05 14:27,11-06 07:50,11-06 10:35,11-09 07:50"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("got  %s\nwant %s", strings.Join(got, ","), want)
+	}
+	if p, _ := s.Prev(at("2026-11-06 16:00")); p != at("2026-11-06 10:35") {
+		t.Fatalf("Friday has no 14:27: %s", fmtT(p))
+	}
+	if n, _ := s.Next(at("2026-11-05 12:00")); n != at("2026-11-05 14:27") {
+		t.Fatalf("next %s", fmtT(n))
+	}
+	if d := sp.Describe(); d != "Hetente (H, K, Sze, Cs, P) 07:50, 10:35; Hetente (H, K, Sze, Cs) 14:27" {
+		t.Fatalf("describe %q", d)
+	}
+	// errors name the schedule; nesting is refused
+	if _, err := Compile(Spec{Type: Daily, Times: []string{"06:00"}, Also: []Spec{{Type: Daily}}}, nil, bud); err == nil || !strings.Contains(err.Error(), "2. ütemezés") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := Compile(Spec{Type: Daily, Times: []string{"06:00"}, Also: []Spec{{Type: Daily, Times: []string{"07:00"}, Also: []Spec{{Type: Daily, Times: []string{"08:00"}}}}}}, nil, bud); err == nil {
+		t.Fatal("nested further schedules must be refused")
+	}
+	// a monthly cron further schedule scans far enough
+	m := compile(t, Spec{Type: Daily, Times: []string{"06:00"}, Also: []Spec{{Type: Cron, Cron: "0 9 29 2 *"}}})
+	if m.scanDays() != maxScanDaysCron {
+		t.Fatal("scan days")
+	}
+}

@@ -152,7 +152,19 @@ textarea.input { height: auto; min-height: 64px; padding: 8px 10px; resize: vert
 .time-menu button { justify-content: center; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .time-menu button.on { background: var(--selected); font-weight: 700; }
 .mail-pick { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: var(--background); }
-.mail-pick select { font-size: 13px; }
+.mail-combo { position: relative; display: flex; align-items: center; }
+.mail-combo > svg { position: absolute; left: 10px; width: 15px; height: 15px; color: var(--muted); pointer-events: none; }
+.mail-combo > .input { padding-left: 32px; }
+.mail-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30; max-height: 340px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.18); padding: 4px; }
+.mail-opt { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.mail-opt .t { flex: 1 1 auto; min-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text); }
+.mail-opt .m { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.mail-opt:hover { background: var(--hover); }
+.mail-opt.on { background: var(--primary); }
+.mail-opt.on .t, .mail-opt.on .m { color: #fff; }
+.mail-empty { padding: 10px; color: var(--muted); font-size: 13px; }
+.sched-block { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px 12px; margin-bottom: 10px; }
+.sched-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
 .tb-install { padding: 12px 14px; border-radius: 8px; background: var(--background); margin-bottom: 6px; display: flex; flex-direction: column; gap: 6px; }
 .gap-box { margin-top: 14px; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 8px; }
 .time-add { display: inline-flex; gap: 4px; }
