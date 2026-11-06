@@ -37,7 +37,7 @@ Minden sikeres build után automatikusan új kiadás készül (`BIMonitor.exe` +
 5. [Állapotok](#állapotok)
 6. [Értesítések](#értesítések)
 7. [Előzmények és statisztika](#előzmények-és-statisztika)
-8. [Közös mód (csapat)](#közös-mód-csapat) · [E-mailek figyelése (Thunderbird)](#e-mailek-figyelése-thunderbird) · [Adatbázis-térkép](#adatbázis-térkép-ms-sql) · [Import/export](#importexport)
+8. [Közös mód (csapat)](#közös-mód-csapat) · [E-mailek figyelése (Thunderbird)](#e-mailek-figyelése-thunderbird) · [Adatbázis-térkép](#adatbázis-térkép-ms-sql) · [KNIME futtatás](#knime-futtatás) · [Import/export](#importexport)
 9. [Beállítások](#beállítások)
 10. [Hol tárolja az adatokat?](#hol-tárolja-az-adatokat)
 11. [Parancssori kapcsolók](#parancssori-kapcsolók)
@@ -392,6 +392,47 @@ Közös módban a térkép (kapcsolatok, csoportok, jegyzetek, elrendezés és a
 
 ---
 
+## KNIME futtatás
+
+Külön menüpont (bal oldalt: **KNIME futtatás**): a gépen lévő KNIME workflow-it a háttérben, ablak nélkül futtatja – ütemezve vagy kézzel –, és megmutatja, hogy sikerült-e. A fájl- és e-mail-figyeléstől független, azokhoz nem nyúl.
+
+A KNIME 5.9-től a gyári parancssori futtató (batch) már nem telepíthető, ezért a program az ingyenes **NodePit Batch** bővítménnyel futtat (ingyenes KNIME Analytics Platformmal céges és éles használatra is díjmentes; [licenc](https://nodepit.com/iu/com.nodepit.batch.feature.feature.group)).
+
+### Beállítás (egyszer, illetve új KNIME-verziónál)
+
+1. **KNIME keresése** (a szokásos helyeken: `Program Files\KNIME`, `%LOCALAPPDATA%\Programs\KNIME`, `C:\KNIME*` …) vagy **Tallózás…** a `knime.exe`-hez. A program kiírja a KNIME verzióját, és hogy fent van-e a NodePit Batch.
+2. **Letöltés és telepítés**: letölti a KNIME verziójához való zipet (`https://download.nodepit.com/batch/<verzió>.zip`, pl. `5.12.zip` – új KNIME-nél a verziót magától lépteti), ellenőrzi, és a KNIME saját telepítőjével (p2 director) felteszi. Internet nélküli gépen: töltse le a zipet böngészőből, és **Zip a gépről…**. Ha a zip neve szerint másik KNIME-verzióhoz készült, a program rákérdez. Frissítésnél a régi változatot előbb leveszi.
+   - A KNIME legyen bezárva a telepítés alatt.
+   - Ha a KNIME a `Program Files` alatt van, a telepítéshez rendszergazdai jog kell (a program jelzi): indítsa erre a lépésre a BI Monitort rendszergazdaként, vagy tegye a KNIME-ot egy saját mappába (pl. `C:\KNIME`).
+3. **Egyszerre futhat**: hány workflow futhat párhuzamosan (1–4, alapból 1; mindegyik saját, ideiglenes KNIME-munkamappát kap, így nem akadnak össze).
+
+### Futtatás felvétele
+
+*Új futtatás*:
+
+| Mező | Jelentés |
+|---|---|
+| Workflow | a workflow mappája (benne `workflow.knime`) vagy egy `.knwf` / `.knar` fájl; hálózati útvonal is lehet |
+| Ütemezés | ugyanaz, mint a figyelésnél (naponta, munkanapokon, hetente, óránként, havonta, cron), több ütemezés is; kikapcsolva csak kézzel indul. *Ütemezés bekapcsolva* nélkül szünetel |
+| Workflow-változók | a workflow változóinak felülírása (`név`, `érték`, String / int / double) |
+| Hitelesítések | a workflow „Workflow Credentials” értékei név szerint (pl. adatbázis-felhasználó és jelszó); a jelszó DPAPI-val titkosítva, csak ezen a gépen |
+| Alaphelyzetbe állítás | a csomópontok újraszámolása futtatás előtt (`--reset`, alapból be) |
+| Futtatás másolatból | akkor is fut, ha a workflow nyitva van a KNIME-ban (egy ideiglenes másolatot futtat) |
+| Mentés futás után | alapból ki: a workflow nem változik |
+| Időkorlát | ennyi perc után leállítja (alapból 120; 0 = nincs) |
+| Értesítés hibánál | Windows-értesítés, ha a futás hibás, időtúllépés vagy kimaradt |
+
+### Futás és eredmény
+
+- **Futtatás most** / **Leállítás** (a teljes KNIME-folyamatot leállítja). Egy futtatás egyszerre csak egyszer fut; ha az ütemezett időpontban még tart az előző, az új „kihagyva” lesz.
+- Ütemezett futás legfeljebb 15 perc késéssel indul el (pl. ha a gép épp felébredt); ha a BI Monitor nem futott az időpontban, a futás „kimaradt” jelzést kap, és nem indul el utólag.
+- **Előzmények**: időpont, eredmény, időtartam, és a NodePit kilépési kódja magyarul: 0 sikeres · 10 hibás paraméter · 20 a workflow nem tölthető be (rossz útvonal, vagy másik KNIME-ban nyitva) · 30 hiba futtatás közben (egy csomópont hibára futott) · 40 mentési hiba · 50 ismeretlen hiba. A hibás futásnál a `knime.log` utolsó ERROR sorai is látszanak.
+- **Napló** (kattintás az előzményre): a parancs (a jelszó kitakarva), a KNIME kimenete és a futás `knime.log`-jának vége.
+
+### Szerveren
+
+A futtatás akkor működik, amikor a BI Monitor fut (bejelentkezett felhasználóval, a tálcán). Szerveren használjon egy erre szolgáló felhasználót, amely be van jelentkezve, és amelynek joga van a workflow-k mappáihoz, a hálózati megosztásokhoz és az adatbázisokhoz. (Bejelentkezés nélküli, Windows-szolgáltatásként futó mód egy későbbi bővítés.)
+
 ## Import/export
 
 **Export / import** (lista fejléce vagy Beállítások → Adatok):
@@ -426,6 +467,7 @@ A bal oldali menü **Beállítások** oldalán. A módosítások a jobb felső *
 | `%LOCALAPPDATA%\EnergofishMonitor\WebView2\` | a felület böngészőmotorjának gyorsítótára |
 | `%LOCALAPPDATA%\EnergofishMonitor\shared-cache.json` | közös módban a közös lista helyi másolata (offline működéshez) |
 | `%LOCALAPPDATA%\EnergofishMonitor\adatbazis-terkep\` | az adatbázis-térkép (közös módban a közös térkép helyi másolata) |
+| `%LOCALAPPDATA%\EnergofishMonitor\knime\` | KNIME futtatás: a futtatások és beállításuk (`jobs.json`), az előzmények (`runs.json`), a futások naplói (`naplok\`), a hitelesítések jelszavai (`jelszavak\`, DPAPI), a letöltött NodePit zip (`letoltesek\`) és a futások ideiglenes munkamappái (`munka\`, futás után törlődnek) |
 | `%APPDATA%\EnergofishMonitor\sql-jelszo.bin` | az SQL Server-jelszó (csak SQL-bejelentkezésnél), Windows DPAPI-val titkosítva |
 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\EnergofishBIMonitor` | automatikus indítás |
 | *közös mappa* (közös módban) | a riportdefiníciók és zárak – lásd [Közös mód](#közös-mód-csapat) |

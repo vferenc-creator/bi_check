@@ -1,0 +1,59 @@
+/* "KNIME" menu */
+.kn-card { margin-bottom: 16px; }
+.kn-setup { display: grid; gap: 14px; }
+.kn-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 10px; align-items: start; }
+.kn-lbl { font-weight: 650; font-size: 13px; padding-top: 3px; }
+.kn-val { min-width: 0; font-size: 13px; }
+.kn-act { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.kn-opts { border-top: 1px solid var(--border); padding-top: 12px; }
+.kn-busy { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--waiting); }
+.kn-busy svg { width: 15px; height: 15px; }
+.kn-res { margin-top: 4px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.kn-res.bad { background: color-mix(in srgb, var(--missing) 10%, transparent); }
+.kn-pre { margin: 0; padding: 10px 12px; background: var(--background); border: 1px solid var(--border); border-radius: 8px; font-family: var(--mono); font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
+.kn-log { max-height: 60vh; margin-top: 10px; }
+.kn-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); }
+.kn-pill.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.kn-pill.bad { background: color-mix(in srgb, var(--missing) 14%, transparent); color: var(--missing); }
+.kn-pill.warn { background: color-mix(in srgb, var(--late) 18%, transparent); color: var(--late); }
+.kn-pill.run { background: color-mix(in srgb, var(--waiting) 16%, transparent); color: var(--waiting); }
+.kn-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: kn-blink 1.2s infinite; }
+@keyframes kn-blink { 50% { opacity: .25; } }
+.kn-table { border: 0; border-radius: 0 0 var(--radius) var(--radius); box-shadow: none; }
+.kn-table td { vertical-align: top; }
+.kn-name { font-weight: 600; }
+.kn-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kn-msg { color: var(--missing); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.kn-btns { text-align: right; white-space: nowrap; }
+.kn-btns .btn { margin-left: 4px; }
+.kn-empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+.kn-runs { display: grid; }
+.kn-run { display: grid; grid-template-columns: 110px 110px minmax(120px, 220px) 150px 1fr 18px; gap: 10px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.kn-run:last-child { border-bottom: 0; }
+.kn-run.click { cursor: pointer; }
+.kn-run.click:hover { background: var(--hover); }
+.kn-run .t { color: var(--muted); font-size: 12.5px; }
+.kn-run > .kn-pill { justify-self: start; }
+.kn-run .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kn-run .m { color: var(--missing); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.kn-run svg { width: 15px; height: 15px; color: var(--muted); }
+.kn-modal { width: 1060px; }
+.kn-ed { display: grid; grid-template-columns: 1fr 280px; gap: 20px; }
+.kn-ed .side { position: sticky; top: 0; align-self: start; }
+.kn-ed fieldset { border: 0; padding: 0; margin: 0 0 18px; }
+.kn-ed legend { font-size: 12px; text-transform: uppercase; letter-spacing: .7px; font-weight: 650; color: var(--muted); margin-bottom: 10px; padding: 0; }
+.kn-ed fieldset > .field + .field { margin-top: 10px; }
+.kn-preview { background: var(--background); border-radius: 10px; padding: 12px 14px; min-height: 40px; }
+.kn-list { display: grid; gap: 6px; }
+.kn-li { display: grid; grid-template-columns: 1fr 1fr 120px 32px; gap: 6px; align-items: center; }
+.kn-list > .btn { justify-self: start; }
+.kn-sblock { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.kn-sh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+@media (max-width: 900px) {
+  .kn-row { grid-template-columns: 1fr; }
+  .kn-act { justify-content: flex-start; }
+  .kn-ed { grid-template-columns: 1fr; }
+  .kn-run { grid-template-columns: 1fr auto; }
+  .kn-run .m, .kn-run .muted { grid-column: 1 / -1; }
+}

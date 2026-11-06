@@ -64,6 +64,7 @@ type App struct {
 
 	drift driftCache // gentle "comes later and later" hints
 	db    dbState    // the read-only database browser ("Adatbázis" tab)
+	kn    knimeState // running KNIME workflows ("KNIME" menu)
 
 	// OnCall, if set, is invoked before every RPC (used by --selftest).
 	OnCall func(method string)
@@ -137,6 +138,7 @@ func New(p Platform, opt Options) (*App, error) {
 	a.registerTeamAPI()
 	a.registerSharedModeAPI()
 	a.registerThunderbirdAPI()
+	a.registerKnimeAPI()
 	return a, nil
 }
 
@@ -162,6 +164,7 @@ func (a *App) Start() {
 	a.syncThunderbird()
 	go a.refreshInstalledXPI(false) // keep the add-on in step with the application
 	go a.Engine.Run(ctx)
+	a.startKnime(ctx)
 	go a.background(a.stop)
 	if s := a.Settings.Get(); s.Team.Enabled && s.Team.Folder != "" {
 		a.startTeam(s.Team)
