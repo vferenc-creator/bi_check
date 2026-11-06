@@ -27,6 +27,14 @@ var dbmapJS string
 //go:embed dbmap.css
 var dbmapCSS string
 
+// The "KNIME" menu (running KNIME workflows) lives in its own files.
+//
+//go:embed knime.js
+var knimeJS string
+
+//go:embed knime.css
+var knimeCSS string
+
 // Page returns the complete UI as one HTML document (CSS, JS and the icon
 // inlined), suitable for WebView2's NavigateToString or a dev HTTP server.
 func Page() string {
@@ -39,8 +47,8 @@ func Page() string {
 		"{{ICON_LIGHT}}", iconLight,
 		"{{ICON}}", icon,
 		"{{BRANDVARS}}", b.CSSVariables(),
-		"{{STYLES}}", stylesCSS+"\n"+dbmapCSS,
-		"{{SCRIPT}}", appJS+"\n"+dbmapJS,
+		"{{STYLES}}", stylesCSS+"\n"+dbmapCSS+"\n"+knimeCSS,
+		"{{SCRIPT}}", appJS+"\n"+dbmapJS+"\n"+knimeJS,
 	)
 	return r.Replace(indexHTML)
 }

@@ -346,6 +346,7 @@ function renderSidebar() {
   sb.append(h("div", { class: "spacer" }));
   if (teamOn()) sb.append(nav("trash", "Lomtár", "trash", S.snap.team.trash || undefined, { active: S.view === "trash", onclick: () => go("trash") }));
   if (typeof views.db === "function") sb.append(nav("db", "Adatbázis", "db", undefined, { active: S.view === "db", onclick: () => go("db") }));
+  if (typeof views.knime === "function") sb.append(nav("knime", "KNIME futtatás", "knime", undefined, { active: S.view === "knime", onclick: () => go("knime") }));
   sb.append(nav("events", "Eseménynapló", "calendar", undefined, { active: S.view === "events", onclick: () => go("events") }));
   sb.append(nav("settings", "Beállítások", "gear", undefined, { active: S.view === "settings", onclick: () => go("settings") }));
   sb.append(nav("about", "Névjegy", "info", undefined, { active: S.view === "about", onclick: () => go("about") }));
