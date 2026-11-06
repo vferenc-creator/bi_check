@@ -64,14 +64,30 @@ func (a *App) startKnime(ctx context.Context) {
 	}
 }
 
+// stopKnime stops the running KNIME processes at program exit and waits for
+// them (so no KNIME is left running and the temporary workspaces go).
+func (a *App) stopKnime() {
+	if a.kn.runner != nil {
+		a.kn.runner.Stop(30 * time.Second)
+	}
+}
+
 func (a *App) knimeFinished(run knime.Run, j knime.Job) {
-	log.Printf("knime: %s – %s (%s) %s", j.Name, run.Status, run.Trigger, firstLine(run.Message))
-	if !j.Notify {
+	try := ""
+	if run.Attempts > 1 {
+		try = fmt.Sprintf(" [%d/%d. próbálkozás]", run.Attempt, run.Attempts)
+	}
+	log.Printf("knime: %s – %s (%s)%s %s", j.Name, run.Status, run.Trigger, try, firstLine(run.Message))
+	if !j.Notify || !run.NextRetry.IsZero() { // a retry follows: only the final failure notifies
 		return
 	}
 	switch run.Status {
 	case knime.StatusError, knime.StatusTimeout, knime.StatusMissed:
-		a.P.Notify("KNIME: "+j.Name, firstLine(run.Message), NotifyError)
+		msg := firstLine(run.Message)
+		if run.Attempt > 1 {
+			msg = fmt.Sprintf("%d próbálkozás után sem sikerült. %s", run.Attempt, msg)
+		}
+		a.P.Notify("KNIME: "+j.Name, msg, NotifyError)
 	}
 }
 
@@ -85,11 +101,12 @@ func firstLine(s string) string {
 // ---- API ---------------------------------------------------------------------
 
 type knimeJobView struct {
-	Job  knime.Job  `json:"job"`
-	Last *knime.Run `json:"last,omitempty"`
-	Live *knime.Run `json:"live,omitempty"` // queued or running
-	Next *time.Time `json:"next,omitempty"`
-	Text string     `json:"scheduleText"`
+	Job   knime.Job    `json:"job"`
+	Last  *knime.Run   `json:"last,omitempty"`
+	Live  *knime.Run   `json:"live,omitempty"` // queued or running
+	Next  *time.Time   `json:"next,omitempty"`
+	Retry *knime.Retry `json:"retry,omitempty"` // pending new try after a failure
+	Text  string       `json:"scheduleText"`
 }
 
 type knimeView struct {
@@ -165,6 +182,9 @@ func (a *App) knimeView() (knimeView, error) {
 		if t := r.Next(j); !t.IsZero() {
 			jv.Next = &t
 		}
+		if rt, ok := st.PendingRetry(j.ID); ok {
+			jv.Retry = &rt
+		}
 		v.Jobs = append(v.Jobs, jv)
 	}
 	v.Runs = st.Runs("", 200)
@@ -183,6 +203,12 @@ func (a *App) registerKnimeAPI() {
 			return knimeView{}, err
 		}
 		c.Exe = strings.TrimSpace(strings.Trim(strings.TrimSpace(c.Exe), `"`))
+		c.Preferences = strings.TrimSpace(strings.Trim(strings.TrimSpace(c.Preferences), `"`))
+		if c.Preferences != "" {
+			if st, err := os.Stat(c.Preferences); err != nil || st.IsDir() {
+				return knimeView{}, errors.New("a beállításfájl nem található: " + c.Preferences)
+			}
+		}
 		if c.Exe != "" {
 			in := knime.Inspect(c.Exe)
 			if in.Error != "" {
@@ -220,6 +246,14 @@ func (a *App) registerKnimeAPI() {
 			dir = filepath.Dir(current)
 		}
 		p, ok := a.P.OpenFileDialog("A KNIME programfájlja (knime.exe)", dir, []FileFilter{{"KNIME (knime.exe)", "knime.exe"}, {"Programok (*.exe)", "*.exe"}})
+		if !ok {
+			return BrowseResult{}, nil
+		}
+		return BrowseResult{Path: p}, nil
+	})
+
+	a.register("knimeBrowsePrefs", func() (BrowseResult, error) {
+		p, ok := a.P.OpenFileDialog("KNIME beállításfájl (File → Export Preferences)", "", []FileFilter{{"KNIME beállítások (*.epf)", "*.epf"}})
 		if !ok {
 			return BrowseResult{}, nil
 		}
@@ -357,6 +391,15 @@ func (a *App) registerKnimeAPI() {
 		return r.Cancel(p.ID), nil
 	})
 
+	// Drops the pending retry of a job (p.ID = job ID).
+	a.register("knimeCancelRetry", func(p idParam) (bool, error) {
+		_, r, err := a.knimeInit()
+		if err != nil {
+			return false, err
+		}
+		return r.CancelRetry(p.ID), nil
+	})
+
 	a.register("knimeLog", func(p idParam) (string, error) {
 		st, _, err := a.knimeInit()
 		if err != nil {
@@ -452,29 +495,44 @@ func (a *App) knimeInstall(p knimeInstallParam) (knimeInstallResult, error) {
 		}
 	}
 
+	// no new run starts while the extension is (re)installed
+	_, runner, _ := a.knimeInit()
+	runner.Hold(true)
+	defer runner.Hold(false)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	var out strings.Builder
-	if in.NodePit != "" { // update: remove the old version first
-		code, o, err := knime.RunCommand(ctx, in.Exe, knime.DirectorArgs("", true))
-		fmt.Fprintf(&out, "== Régi NodePit Batch (%s) eltávolítása – kilépési kód %d\n%s\n", in.NodePit, code, o)
+	step := func(title string, args []string) int {
+		code, o, err := knime.RunCommand(ctx, in.Exe, args)
+		fmt.Fprintf(&out, "== %s – kilépési kód %d\n%s\n", title, code, o)
 		if err != nil {
 			fmt.Fprintf(&out, "%v\n", err)
 		}
+		return code
 	}
-	code, o, err := knime.RunCommand(ctx, in.Exe, knime.DirectorArgs(knime.RepoURL(zipPath), false))
-	fmt.Fprintf(&out, "== NodePit Batch %s telepítése – kilépési kód %d\n%s\n", zi.Version, code, o)
-	if err != nil {
-		fmt.Fprintf(&out, "%v\n", err)
+	repo := knime.RepoURL(zipPath)
+	code := step("NodePit Batch "+zi.Version+" telepítése", knime.DirectorArgs(repo, false))
+	now := knime.Inspect(in.Exe)
+	if in.NodePit != "" && now.NodePit != zi.Version && ctx.Err() == nil {
+		// update that the installer refused over the old version: remove
+		// the old one, then install again
+		step("Régi NodePit Batch ("+in.NodePit+") eltávolítása", knime.DirectorArgs("", true))
+		code = step("NodePit Batch "+zi.Version+" telepítése (újra)", knime.DirectorArgs(repo, false))
+		now = knime.Inspect(in.Exe)
 	}
 	res.Output = out.String()
-	res.Install = knime.Inspect(in.Exe)
+	res.Install = now
 	switch {
-	case res.Install.NodePit != "":
+	case now.NodePit != "" && (zi.Version == "" || now.NodePit == zi.Version):
 		res.OK = true
-		res.Message = "A NodePit Batch " + res.Install.NodePit + " telepítve a KNIME " + res.Install.Version + "-ba. Most már felvehet futtatásokat."
+		res.Message = "A NodePit Batch " + now.NodePit + " telepítve a KNIME " + now.Version + "-ba. Most már felvehet futtatásokat."
+	case now.NodePit != "":
+		res.Message = "A NodePit Batch " + now.NodePit + " maradt telepítve, a(z) " + zi.Version + " nem került fel. Zárja be a KNIME-ot, és próbálja újra. Részletek lent."
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		res.Message = "A telepítés 10 perc alatt sem fejeződött be."
+		res.Message = "A telepítés 10 perc alatt sem fejeződött be – a NodePit Batch most nincs telepítve, a futtatások addig nem indulnak."
+	case in.NodePit != "":
+		res.Message = fmt.Sprintf("A frissítés nem sikerült (kilépési kód: %d), és a NodePit Batch most nincs telepítve – a futtatások addig nem indulnak. Zárja be a KNIME-ot, és telepítse újra. Részletek lent.", code)
 	default:
 		res.Message = fmt.Sprintf("A telepítés nem sikerült (kilépési kód: %d). Fut a KNIME? Zárja be, és próbálja újra. Részletek lent.", code)
 	}

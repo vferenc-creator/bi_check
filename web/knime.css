@@ -26,6 +26,7 @@
 .kn-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kn-msg { color: var(--missing); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
 .kn-btns { text-align: right; white-space: nowrap; }
+.kn-link { height: auto; padding: 2px 0; margin-top: 2px; color: var(--accent-dark); text-decoration: underline; }
 .kn-btns .btn { margin-left: 4px; }
 .kn-empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
 .kn-runs { display: grid; }
@@ -47,6 +48,7 @@
 .kn-preview { background: var(--background); border-radius: 10px; padding: 12px 14px; min-height: 40px; }
 .kn-list { display: grid; gap: 6px; }
 .kn-li { display: grid; grid-template-columns: 1fr 1fr 120px 32px; gap: 6px; align-items: center; }
+.kn-li.pw { grid-template-columns: 1fr 1fr 120px auto 32px; }
 .kn-list > .btn { justify-self: start; }
 .kn-sblock { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .kn-sh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }

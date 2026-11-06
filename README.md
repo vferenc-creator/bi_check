@@ -404,7 +404,10 @@ A KNIME 5.9-től a gyári parancssori futtató (batch) már nem telepíthető, e
 2. **Letöltés és telepítés**: letölti a KNIME verziójához való zipet (`https://download.nodepit.com/batch/<verzió>.zip`, pl. `5.12.zip` – új KNIME-nél a verziót magától lépteti), ellenőrzi, és a KNIME saját telepítőjével (p2 director) felteszi. Internet nélküli gépen: töltse le a zipet böngészőből, és **Zip a gépről…**. Ha a zip neve szerint másik KNIME-verzióhoz készült, a program rákérdez. Frissítésnél a régi változatot előbb leveszi.
    - A KNIME legyen bezárva a telepítés alatt.
    - Ha a KNIME a `Program Files` alatt van, a telepítéshez rendszergazdai jog kell (a program jelzi): indítsa erre a lépésre a BI Monitort rendszergazdaként, vagy tegye a KNIME-ot egy saját mappába (pl. `C:\KNIME`).
-3. **Egyszerre futhat**: hány workflow futhat párhuzamosan (1–4, alapból 1; mindegyik saját, ideiglenes KNIME-munkamappát kap, így nem akadnak össze).
+3. **Egyszerre futhat**: hány workflow futhat párhuzamosan (1–4, alapból 1; mindegyik saját, ideiglenes KNIME-munkamappát kap, így nem akadnak össze). Minden futás egy teljes KNIME a `knime.ini` `-Xmx` memóriakeretével – párhuzamos futásnál ennek többszöröse kell.
+4. **KNIME beállításfájl (.epf)**: a háttérfuttatás új, üres munkaterületen indul, így a KNIME ablakban beállított dolgok (pl. adatbázis-meghajtók) nincsenek meg benne. Exportálja őket (KNIME → File → Export Preferences…), és adja meg itt: minden futás megkapja (`--preferences`).
+
+A NodePit Batch telepítése alatt új futás nem indul. Frissítésnél a program előbb a régi változat fölé telepít; ha ez nem megy, leveszi a régit és újra próbálja – ha így sem sikerül, ezt egyértelműen kiírja (a futtatások addig nem indulnak).
 
 ### Futtatás felvétele
 
@@ -418,13 +421,17 @@ A KNIME 5.9-től a gyári parancssori futtató (batch) már nem telepíthető, e
 | Hitelesítések | a workflow „Workflow Credentials” értékei név szerint (pl. adatbázis-felhasználó és jelszó); a jelszó DPAPI-val titkosítva, csak ezen a gépen |
 | Alaphelyzetbe állítás | a csomópontok újraszámolása futtatás előtt (`--reset`, alapból be) |
 | Futtatás másolatból | akkor is fut, ha a workflow nyitva van a KNIME-ban (egy ideiglenes másolatot futtat) |
-| Mentés futás után | alapból ki: a workflow nem változik |
+| Mentés futás után | alapból ki: a workflow nem változik (a „Futtatás másolatból” mellett nem választható, mert a másolat futás után törlődik) |
 | Időkorlát | ennyi perc után leállítja (alapból 120; 0 = nincs) |
-| Értesítés hibánál | Windows-értesítés, ha a futás hibás, időtúllépés vagy kimaradt |
+| Újrapróbálás hibánál | hiba vagy időtúllépés után ennyiszer próbálja újra (0–5, új futtatásnál alapból 2×), ennyi perc várakozással (alapból 5). A 10-es kódot (hibás paraméter) és a kézi leállítást nem próbálja újra. Az újrapróbálás a program újraindítását is túléli (12 óránál régebbit „elmaradt”-nak jelöl); a „Futtatás most” helyettesíti, a táblázatban törölhető |
+| KNIME munkaterület (haladó) | üresen minden futás új, ideiglenes munkaterületet kap (ajánlott). Csak ha a workflow `knime://LOCAL/` útvonalat vagy a munkaterület beállításait használja: az ugyanilyen munkaterületű futások egymás után futnak, és a munkaterület közben nem lehet nyitva a KNIME ablakban |
+| Értesítés hibánál | Windows-értesítés, ha a futás hibás, időtúllépés vagy kimaradt – újrapróbálásnál csak az utolsó sikertelen próbálkozás után |
 
 ### Futás és eredmény
 
-- **Futtatás most** / **Leállítás** (a teljes KNIME-folyamatot leállítja). Egy futtatás egyszerre csak egyszer fut; ha az ütemezett időpontban még tart az előző, az új „kihagyva” lesz.
+- **Futtatás most** / **Leállítás** (a teljes KNIME-folyamatot leállítja). Egy futtatás egyszerre csak egyszer fut (dupla kattintásra sem indul kétszer); ha az ütemezett időpontban még tart az előző, az új „kihagyva” lesz.
+- **Kilépéskor** a BI Monitor leállítja és megvárja a futó KNIME-okat; Windowson a KNIME akkor is leáll, ha a BI Monitor összeomlik vagy erőszakkal zárják be (feladatobjektum), így nem marad gazdátlan KNIME a háttérben. Az ideiglenes munkamappák induláskor is törlődnek.
+- Mentés után az első ütemezett időpont már érvényes (pl. 05:59-kor mentve, 06:00-ra ütemezve fut 06:00-kor); a mentés előtti időpontokat nem pótolja.
 - Ütemezett futás legfeljebb 15 perc késéssel indul el (pl. ha a gép épp felébredt); ha a BI Monitor nem futott az időpontban, a futás „kimaradt” jelzést kap, és nem indul el utólag.
 - **Előzmények**: időpont, eredmény, időtartam, és a NodePit kilépési kódja magyarul: 0 sikeres · 10 hibás paraméter · 20 a workflow nem tölthető be (rossz útvonal, vagy másik KNIME-ban nyitva) · 30 hiba futtatás közben (egy csomópont hibára futott) · 40 mentési hiba · 50 ismeretlen hiba. A hibás futásnál a `knime.log` utolsó ERROR sorai is látszanak.
 - **Napló** (kattintás az előzményre): a parancs (a jelszó kitakarva), a KNIME kimenete és a futás `knime.log`-jának vége.

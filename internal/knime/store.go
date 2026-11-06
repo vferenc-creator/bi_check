@@ -33,23 +33,32 @@ type Credential struct {
 
 // Job is one workflow with its parameters and schedule.
 type Job struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Workflow    string        `json:"workflow"` // folder of the workflow, or a .knwf / .knar file
-	Variables   []Variable    `json:"variables"`
-	Credentials []Credential  `json:"credentials"`
-	Reset       bool          `json:"reset"`      // reset before execution
-	Save        bool          `json:"save"`       // save the workflow after execution
-	Copy        bool          `json:"copy"`       // run a copy (works while the workflow is open in KNIME)
-	TimeoutMin  int           `json:"timeoutMin"` // 0 = no limit
-	Scheduled   bool          `json:"scheduled"`  // false = manual runs only
-	Schedule    schedule.Spec `json:"schedule"`
-	Enabled     bool          `json:"enabled"` // scheduled runs on
-	Notify      bool          `json:"notify"`  // desktop notification on failure
-	Note        string        `json:"note"`
-	ExtraArgs   string        `json:"extraArgs"` // further NodePit options (advanced)
-	Created     time.Time     `json:"created"`
-	Updated     time.Time     `json:"updated"`
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Workflow    string       `json:"workflow"` // folder of the workflow, or a .knwf / .knar file
+	Variables   []Variable   `json:"variables"`
+	Credentials []Credential `json:"credentials"`
+	Reset       bool         `json:"reset"`      // reset before execution
+	Save        bool         `json:"save"`       // save the workflow after execution
+	Copy        bool         `json:"copy"`       // run a copy (works while the workflow is open in KNIME)
+	TimeoutMin  int          `json:"timeoutMin"` // 0 = no limit
+	// RetryCount: a failed or timed-out run is tried again this many times
+	// (0–5), RetryWaitMin minutes after the failure.
+	RetryCount   int           `json:"retryCount"`
+	RetryWaitMin int           `json:"retryWaitMin"`
+	Scheduled    bool          `json:"scheduled"` // false = manual runs only
+	Schedule     schedule.Spec `json:"schedule"`
+	Enabled      bool          `json:"enabled"` // scheduled runs on
+	Notify       bool          `json:"notify"`  // desktop notification on failure
+	Note         string        `json:"note"`
+	ExtraArgs    string        `json:"extraArgs"` // further NodePit options (advanced)
+	// Workspace: "" = a fresh temporary workspace per run (default); else the
+	// KNIME workspace to run in (for knime://LOCAL/ paths and workspace
+	// preferences). Runs of one workspace never overlap, and it must not be
+	// open in the KNIME window at the same time.
+	Workspace string    `json:"workspace"`
+	Created   time.Time `json:"created"`
+	Updated   time.Time `json:"updated"`
 }
 
 // Run statuses.
@@ -78,8 +87,23 @@ type Run struct {
 	ExitCode   *int      `json:"exitCode,omitempty"`
 	Message    string    `json:"message"`
 	DurationMs int64     `json:"durationMs"`
-	Log        string    `json:"log,omitempty"` // file name in the logs folder
+	Log        string    `json:"log,omitempty"`      // file name in the logs folder
+	Attempt    int       `json:"attempt,omitempty"`  // 1 = first try
+	Attempts   int       `json:"attempts,omitempty"` // tries allowed (1 + retries)
+	NextRetry  time.Time `json:"nextRetry,omitempty"`
 }
+
+// Retry is a pending new try of a failed run.
+type Retry struct {
+	At      time.Time `json:"at"`
+	Attempt int       `json:"attempt"` // the try that starts at At
+	Of      int       `json:"of"`      // tries allowed
+	Trigger string    `json:"trigger"`
+	Due     time.Time `json:"due,omitempty"`
+}
+
+// MaxRetries is the most retries a job may have.
+const MaxRetries = 5
 
 // Config of the KNIME module.
 type Config struct {
@@ -87,6 +111,9 @@ type Config struct {
 	Parallel   int    `json:"parallel"`   // runs at the same time (1–4)
 	ConsoleLog bool   `json:"consoleLog"` // pass -consoleLog (output also on stdout)
 	KeepRuns   int    `json:"keepRuns"`   // runs kept in the history
+	// Preferences: a KNIME preferences file (File → Export Preferences, .epf)
+	// applied to every run (e.g. database drivers set up in the KNIME window).
+	Preferences string `json:"preferences"`
 }
 
 func (c *Config) normalize() {
@@ -104,7 +131,8 @@ func (c *Config) normalize() {
 type jobsFile struct {
 	Config Config               `json:"config"`
 	Jobs   []Job                `json:"jobs"`
-	Last   map[string]time.Time `json:"last"` // job ID → last scheduled instant handled
+	Last   map[string]time.Time `json:"last"`  // job ID → last scheduled instant handled
+	Retry  map[string]Retry     `json:"retry"` // job ID → pending retry (survives a restart)
 }
 
 // Store keeps the jobs (jobs.json) and the run history (runs.json) in the
@@ -125,15 +153,28 @@ func OpenStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "naplok"), 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, f: jobsFile{Last: map[string]time.Time{}}}
-	if err := readJSON(filepath.Join(dir, "jobs.json"), &s.f); err != nil {
+	s := &Store{dir: dir}
+	// decoded into fresh values: a damaged file must not leave half-read data
+	var f jobsFile
+	if ok, err := readJSON(filepath.Join(dir, "jobs.json"), &f); err != nil {
 		return nil, err
+	} else if ok {
+		s.f = f
 	}
-	if err := readJSON(filepath.Join(dir, "runs.json"), &s.run); err != nil {
+	var runs []Run
+	if ok, err := readJSON(filepath.Join(dir, "runs.json"), &runs); err != nil {
 		return nil, err
+	} else if ok {
+		s.run = runs
 	}
+	// temporary workspaces left behind (the program or the computer stopped
+	// during a run): they may hold the command line of a run
+	_ = os.RemoveAll(filepath.Join(dir, "munka"))
 	if s.f.Last == nil {
 		s.f.Last = map[string]time.Time{}
+	}
+	if s.f.Retry == nil {
+		s.f.Retry = map[string]Retry{}
 	}
 	if s.f.Jobs == nil {
 		s.f.Jobs = []Job{}
@@ -151,32 +192,46 @@ func OpenStore(dir string) (*Store, error) {
 	return s, nil
 }
 
-func readJSON(path string, v any) error {
+// readJSON decodes path into v; ok is false when the file is missing or
+// damaged (an empty or unreadable file is kept aside, never overwritten
+// silently).
+func readJSON(path string, v any) (bool, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
-	if len(strings.TrimSpace(string(b))) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(b, v); err != nil {
+	if len(strings.TrimSpace(string(b))) == 0 || json.Unmarshal(b, v) != nil {
 		bad := path + ".hibas-" + time.Now().Format("20060102-150405")
 		_ = os.Rename(path, bad)
-		return nil // start empty, keep the damaged file aside
+		return false, nil // start empty, keep the damaged file aside
 	}
-	return nil
+	return true, nil
 }
 
+// writeJSON replaces path atomically, flushed to disk first (a power cut
+// leaves the old or the new file, never an empty one).
 func writeJSON(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -255,6 +310,19 @@ func Validate(j *Job) error {
 	if j.TimeoutMin < 0 || j.TimeoutMin > 24*60 {
 		return errors.New("az időkorlát 0 és 1440 perc között lehet (0 = nincs)")
 	}
+	if j.RetryCount < 0 || j.RetryCount > MaxRetries {
+		return fmt.Errorf("az újrapróbálások száma 0 és %d között lehet", MaxRetries)
+	}
+	if j.RetryWaitMin < 0 || j.RetryWaitMin > 240 {
+		return errors.New("az újrapróbálás előtti várakozás 1 és 240 perc között lehet")
+	}
+	if j.RetryCount > 0 && j.RetryWaitMin == 0 {
+		j.RetryWaitMin = 5
+	}
+	if j.Copy && j.Save {
+		return errors.New("a „Mentés futás után” nem használható a „Futtatás másolatból” mellett (a másolat futás után törlődik)")
+	}
+	j.Workspace = strings.TrimSpace(strings.Trim(strings.TrimSpace(j.Workspace), `"`))
 	vs := j.Variables[:0]
 	for _, v := range j.Variables {
 		v.Name = strings.TrimSpace(v.Name)
@@ -347,6 +415,7 @@ func (s *Store) DeleteJob(id string) error {
 	}
 	s.f.Jobs = out
 	delete(s.f.Last, id)
+	delete(s.f.Retry, id)
 	if gone != nil {
 		for _, c := range gone.Credentials {
 			_ = os.Remove(s.SecretPath(id, c.Name))
@@ -368,6 +437,54 @@ func (s *Store) SetLastDue(id string, t time.Time) error {
 	defer s.mu.Unlock()
 	s.f.Last[id] = t
 	return s.saveJobs()
+}
+
+// PendingRetry returns the pending retry of a job.
+func (s *Store) PendingRetry(id string) (Retry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt, ok := s.f.Retry[id]
+	return rt, ok
+}
+
+// Retries returns a copy of the pending retries by job ID.
+func (s *Store) Retries() map[string]Retry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]Retry, len(s.f.Retry))
+	for k, v := range s.f.Retry {
+		out[k] = v
+	}
+	return out
+}
+
+// SetRetry records a pending retry of a job (not kept if it cannot be saved).
+func (s *Store) SetRetry(id string, rt Retry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, had := s.f.Retry[id]
+	s.f.Retry[id] = rt
+	if err := s.saveJobs(); err != nil {
+		if had {
+			s.f.Retry[id] = old
+		} else {
+			delete(s.f.Retry, id)
+		}
+		return err
+	}
+	return nil
+}
+
+// ClearRetry drops the pending retry of a job (true if there was one).
+func (s *Store) ClearRetry(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.f.Retry[id]; !ok {
+		return false
+	}
+	delete(s.f.Retry, id)
+	_ = s.saveJobs()
+	return true
 }
 
 // PutRun adds or updates a run in the history.

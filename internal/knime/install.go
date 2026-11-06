@@ -314,7 +314,8 @@ func DirectorArgs(repo string, uninstall bool) []string {
 	if uninstall {
 		op = "-uninstallIU"
 	}
-	args := []string{"-nosplash", "--launcher.suppressErrors", "-consoleLog", "-application", DirectorApp, op, FeatureIU}
+	// -data @none: the installer must not touch (or lock) a KNIME workspace
+	args := []string{"-nosplash", "--launcher.suppressErrors", "-consoleLog", "-data", "@none", "-application", DirectorApp, op, FeatureIU}
 	if repo != "" {
 		args = append(args, "-repository", repo)
 	}

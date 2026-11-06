@@ -14,7 +14,10 @@ const KN = { view: null, poll: null, result: null, busy: false };
 const KN_STATUS = {
   ok: ["ok", "Sikeres"], error: ["bad", "Hiba"], timeout: ["bad", "Időtúllépés"], canceled: ["mute", "Megszakítva"],
   missed: ["warn", "Kimaradt"], skipped: ["mute", "Kihagyva"], running: ["run", "Fut"], queued: ["run", "Sorban áll"],
+  retry: ["warn", "Újrapróbál"],
 };
+// "2/3. próbálkozás" when the job has retries
+function knTry(r) { return r && r.attempts > 1 ? (r.attempt || 1) + "/" + r.attempts + ". próbálkozás" : ""; }
 function knPill(status) {
   const [cls, txt] = KN_STATUS[status] || ["mute", "Még nem futott"];
   return h("span", { class: "kn-pill " + cls }, status === "running" ? h("span", { class: "kn-dot" }) : null, txt);
@@ -86,7 +89,8 @@ function knSetupCard(v) {
   if (KN.result) {
     const r = KN.result;
     body.append(h("div", { class: "kn-res " + (r.ok ? "ok" : "bad") }, h("b", {}, r.ok ? "Kész. " : "Nem sikerült. "), r.message,
-      r.output ? h("details", { style: { marginTop: "6px" } }, h("summary", {}, "Részletek"), h("pre", { class: "kn-pre" }, r.output)) : null));
+      r.output ? h("details", { style: { marginTop: "6px" }, open: !!KN.detailsOpen, ontoggle: e => { KN.detailsOpen = e.currentTarget.open; } },
+        h("summary", {}, "Részletek"), h("pre", { class: "kn-pre" }, r.output)) : null));
   }
   const c = v.config || {};
   body.append(h("div", { class: "kn-row kn-opts" },
@@ -96,13 +100,20 @@ function knSetupCard(v) {
         h("select", { class: "input", style: { width: "auto" }, onchange: e => knSaveConfig({ parallel: +e.target.value }) },
           [1, 2, 3, 4].map(n => h("option", { value: n, selected: c.parallel === n }, n + " workflow")))),
       h("label", { class: "switch", title: "A KNIME kimenete a naplóba (ha a gépen ez felugró ablakot nyit, kapcsolja ki)" },
-        h("input", { type: "checkbox", checked: !!c.consoleLog, onchange: e => knSaveConfig({ consoleLog: e.target.checked }) }), "Konzolkimenet a naplóba (-consoleLog)")),
+        h("input", { type: "checkbox", checked: !!c.consoleLog, onchange: e => knSaveConfig({ consoleLog: e.target.checked }) }), "Konzolkimenet a naplóba (-consoleLog)"),
+      h("div", { class: "row", style: { gap: "8px", flexBasis: "100%" } }, h("span", { title: "A KNIME ablakban beállított dolgok (pl. adatbázis-meghajtók) a háttérfuttatásnál nincsenek meg. Exportálja őket: KNIME → File → Export Preferences…" }, "KNIME beállításfájl (.epf):"),
+        c.preferences ? h("span", { class: "mono small selectable", style: { wordBreak: "break-all" } }, c.preferences) : h("span", { class: "small muted" }, "nincs (ha a workflow adatbázis-meghajtót vagy más KNIME-beállítást használ, adja meg)"),
+        h("button", { class: "btn sm", onclick: knBrowsePrefs }, icon("folder"), "Tallózás…"),
+        c.preferences ? h("button", { class: "btn sm ghost", onclick: () => knSaveConfig({ preferences: "" }) }, "Törlés") : null)),
     h("div", { class: "kn-act" })));
   return h("div", { class: "card kn-card" }, h("div", { class: "card-h" }, icon("knime"), h("h3", {}, "KNIME és NodePit Batch")), body);
 }
 
 async function knSaveConfig(patch) {
   try { KN.view = await api("knimeSetConfig", Object.assign({}, KN.view.config, patch)); knRender(); } catch (e) { fail(e); }
+}
+async function knBrowsePrefs() {
+  try { const r = await api("knimeBrowsePrefs"); if (r.path) knSaveConfig({ preferences: r.path }); } catch (e) { fail(e); }
 }
 async function knDetect() {
   try { KN.view = await api("knimeDetect"); KN.result = null; knRender(); toast("KNIME megtalálva: " + KN.view.install.exe); } catch (e) { fail(e); }
@@ -152,13 +163,17 @@ function knJobsCard(v) {
   }
   const tb = h("tbody");
   for (const jv of v.jobs) {
-    const j = jv.job, live = jv.live, last = jv.last;
-    const st = live ? live.status : last ? last.status : "";
+    const j = jv.job, live = jv.live, last = jv.last, retry = !live && jv.retry;
+    const st = live ? live.status : retry ? "retry" : last ? last.status : "";
     tb.append(h("tr", { class: j.scheduled && !j.enabled ? "off" : "" },
       h("td", {}, knPill(st)),
       h("td", {}, h("div", { class: "kn-name" }, j.name), h("div", { class: "mono small muted kn-ell", title: j.workflow }, j.workflow)),
       h("td", { class: "small" }, h("div", {}, jv.scheduleText), jv.next ? h("div", { class: "muted" }, "Következő: " + fmtDateTime(jv.next)) : null),
-      h("td", { class: "small" }, live ? h("div", {}, live.status === "running" ? "Fut, indult: " + fmtDateTime(live.started) : "Sorban áll")
+      h("td", { class: "small" }, live ? h("div", {}, live.status === "running" ? "Fut, indult: " + fmtDateTime(live.started) : "Sorban áll",
+          knTry(live) ? h("span", { class: "muted" }, " · " + knTry(live)) : null)
+        : retry ? h("div", {}, "Hiba után újrapróbálja: " + fmtDateTime(retry.at), h("span", { class: "muted" }, " · " + retry.attempt + "/" + retry.of + ". próbálkozás"),
+          last ? h("div", { class: "kn-msg", title: last.message }, knFirst(last.message)) : null,
+          h("button", { class: "btn sm ghost kn-link", onclick: () => knCancelRetry(j.id) }, "Újrapróbálás törlése"))
         : last ? h("div", {}, fmtDateTime(last.ended || last.queued), last.durationMs ? h("span", { class: "muted" }, " · " + fmtDur(last.durationMs / 1000)) : null,
           last.status !== "ok" ? h("div", { class: "kn-msg", title: last.message }, knFirst(last.message)) : null) : h("span", { class: "muted" }, "–")),
       h("td", { class: "kn-btns" },
@@ -183,6 +198,9 @@ function knFirst(s) { return String(s || "").split("\n")[0]; }
 async function knRunNow(id) {
   try { await api("knimeRunNow", { id }); toast("Elindítva."); knLoad(); } catch (e) { fail(e); }
 }
+async function knCancelRetry(jobId) {
+  try { await api("knimeCancelRetry", { id: jobId }); toast("Az újrapróbálás törölve."); knLoad(); } catch (e) { fail(e); }
+}
 async function knCancel(runId) {
   try { await api("knimeCancel", { id: runId }); knLoad(); } catch (e) { fail(e); }
 }
@@ -205,7 +223,7 @@ function knRunsCard(v) {
       h("span", { class: "t" }, fmtDateTime(r.started || r.queued || r.ended)),
       knPill(r.status),
       h("span", { class: "n" }, r.jobName),
-      h("span", { class: "muted small" }, r.trigger + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
+      h("span", { class: "muted small" }, r.trigger + (knTry(r) ? " · " + knTry(r) : "") + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
       h("span", { class: "m", title: r.message }, r.status === "ok" ? "" : knFirst(r.message)),
       r.log ? icon("logTxt") : h("span")));
   }
@@ -234,7 +252,7 @@ const KN_TYPES = [["daily", "Naponta"], ["workdays", "Munkanapokon"], ["weekly",
 
 function knEditor(job) {
   const isNew = !job || !job.id;
-  const j = job ? JSON.parse(JSON.stringify(job)) : { name: "", workflow: "", variables: [], credentials: [], reset: true, save: false, copy: false, timeoutMin: 120,
+  const j = job ? JSON.parse(JSON.stringify(job)) : { name: "", workflow: "", variables: [], credentials: [], reset: true, save: false, copy: false, timeoutMin: 120, retryCount: 2, retryWaitMin: 5,
     scheduled: true, enabled: true, notify: true, note: "", extraArgs: "", schedule: { type: "workdays", times: ["06:00"], useHolidays: true } };
   if (!j.schedule || !j.schedule.type) j.schedule = { type: "workdays", times: ["06:00"], useHolidays: true };
   j.variables = j.variables || []; j.credentials = j.credentials || [];
@@ -243,13 +261,21 @@ function knEditor(job) {
   const preview = h("div", { class: "kn-preview" });
   const field = (label, ctrl, hint) => h("label", { class: "field" }, label, ctrl, hint ? h("span", { class: "hint" }, hint) : null);
   const txt = (key, attrs) => h("input", Object.assign({ class: "input", value: j[key] || "", oninput: e => { j[key] = e.target.value; } }, attrs || {}));
-  const sw = (key, label) => h("label", { class: "switch" }, h("input", { type: "checkbox", checked: !!j[key], onchange: e => { j[key] = e.target.checked; if (key === "scheduled") drawSched(); } }), label);
+  const swIn = {};
+  const sw = (key, label) => h("label", { class: "switch" }, swIn[key] = h("input", { type: "checkbox", checked: !!j[key], onchange: e => {
+    j[key] = e.target.checked;
+    if (key === "scheduled") drawSched();
+    // a copy is deleted after the run: saving it would do nothing
+    if (key === "copy" && j.copy && j.save) { j.save = false; swIn.save.checked = false; }
+    if (key === "save" && j.save && j.copy) { j.copy = false; swIn.copy.checked = false; }
+  } }), label);
 
   const wfIn = txt("workflow", { class: "input mono grow", placeholder: "C:\\knime-workspace\\Napi_export   (a workflow mappája)", spellcheck: false });
   const browseWf = async file => {
     try { const r = await api("knimeBrowseWorkflow", { file, current: j.workflow }); if (r.path) { j.workflow = r.path; wfIn.value = r.path; if (!j.name) { j.name = r.path.split(/[\\/]/).filter(Boolean).pop().replace(/\.(knwf|knar)$/i, ""); nameIn.value = j.name; } } } catch (e) { fail(e); }
   };
   const nameIn = txt("name", { placeholder: "pl. Napi értékesítési export" });
+  const waitIn = h("input", { class: "input narrow", type: "number", min: 1, max: 240, value: j.retryWaitMin || 5, disabled: !j.retryCount, style: { width: "70px" } });
 
   // variables
   const varBox = h("div", { class: "kn-list" });
@@ -269,13 +295,15 @@ function knEditor(job) {
   const drawCreds = () => {
     clear(credBox);
     j.credentials.forEach((c, i) => {
-      const pw = h("input", { class: "input", type: "password", autocomplete: "new-password", placeholder: c.hasPassword && !clearPw.has(c.name) ? "•••••• (mentve – üresen megmarad)" : "jelszó", value: passwords[c.name] || "",
+      const stored = c.hasPassword && !clearPw.has(c.name.trim());
+      const pw = h("input", { class: "input", type: "password", autocomplete: "new-password", placeholder: stored ? "•••••• (mentve – üresen megmarad)" : "jelszó", value: passwords[c.name] || "",
         oninput: e => { passwords[c.name] = e.target.value; } });
-      credBox.append(h("div", { class: "kn-li" },
+      credBox.append(h("div", { class: "kn-li" + (stored ? " pw" : "") },
         h("input", { class: "input mono", placeholder: "hitelesítés neve a workflow-ban", value: c.name || "", oninput: e => { const old = c.name; c.name = e.target.value; if (passwords[old] !== undefined) { passwords[c.name] = passwords[old]; delete passwords[old]; } } }),
         h("input", { class: "input", placeholder: "felhasználó", value: c.login || "", oninput: e => { c.login = e.target.value; } }),
         pw,
-        h("button", { class: "btn sm icon ghost", title: "Törlés", onclick: () => { j.credentials.splice(i, 1); drawCreds(); } }, icon("trash"))));
+        stored ? h("button", { class: "btn sm ghost", title: "A mentett jelszó törlése", onclick: () => { clearPw.add(c.name.trim()); delete passwords[c.name]; drawCreds(); } }, "jelszó ×") : null,
+        h("button", { class: "btn sm icon ghost", title: "Törlés", onclick: () => { if (c.name.trim()) clearPw.add(c.name.trim()); delete passwords[c.name]; j.credentials.splice(i, 1); drawCreds(); } }, icon("trash"))));
     });
     credBox.append(h("button", { class: "btn sm", onclick: () => { j.credentials.push({ name: "", login: "", hasPassword: false }); drawCreds(); } }, icon("plus"), "Hitelesítés"));
   };
@@ -376,9 +404,13 @@ function knEditor(job) {
   const close = () => ov.remove();
   const save = async () => {
     clear(err);
-    const cleared = j.credentials.filter(c => c.hasPassword && clearPw.has(c.name)).map(c => c.name);
+    j.retryWaitMin = parseInt(waitIn.value, 10) || 0;
+    // names as the server sees them (trimmed); a removed or cleared name
+    // never keeps its old password, even if added again
+    const pws = {};
+    for (const [k, v] of Object.entries(passwords)) if (v) pws[k.trim()] = v;
     try {
-      await api("knimeSaveJob", { job: j, passwords, clear: cleared });
+      await api("knimeSaveJob", { job: j, passwords: pws, clear: [...clearPw] });
       close();
       toast(isNew ? "Futtatás felvéve: " + j.name : "Mentve: " + j.name);
       knLoad();
@@ -406,10 +438,20 @@ function knEditor(job) {
               sw("copy", "Futtatás másolatból"),
               sw("save", "Mentés futás után"),
               sw("notify", "Értesítés hibánál")),
-            h("div", { class: "small muted", style: { margin: "6px 0 10px", lineHeight: 1.45 } }, "„Futtatás másolatból”: akkor is fut, ha a workflow épp nyitva van a KNIME-ban (egy ideiglenes másolatot futtat)."),
+            h("div", { class: "small muted", style: { margin: "6px 0 10px", lineHeight: 1.45 } }, "„Futtatás másolatból”: akkor is fut, ha a workflow épp nyitva van a KNIME-ban (egy ideiglenes másolatot futtat; mentés ilyenkor nincs)."),
             h("div", { class: "row wrap", style: { gap: "10px 18px" } },
               field("Időkorlát (perc)", h("input", { class: "input narrow", type: "number", min: 0, max: 1440, value: j.timeoutMin, oninput: e => { j.timeoutMin = parseInt(e.target.value, 10) || 0; } }), "0 = nincs; utána leállítja"),
-              h("div", { style: { flex: 1, minWidth: "240px" } }, field("További NodePit kapcsolók (haladó)", txt("extraArgs", { class: "input mono", placeholder: "pl. --preferences \"C:\\knime\\prefs.epf\"", spellcheck: false }))))),
+              h("div", { class: "field" }, "Újrapróbálás hibánál",
+                h("div", { class: "row", style: { gap: "8px" } },
+                  h("select", { class: "input", style: { width: "auto" }, onchange: e => { j.retryCount = +e.target.value; if (j.retryCount && !j.retryWaitMin) { j.retryWaitMin = 5; waitIn.value = 5; } waitIn.disabled = !j.retryCount; } },
+                    [0, 1, 2, 3, 4, 5].map(n => h("option", { value: n, selected: (j.retryCount || 0) === n }, n ? n + "×" : "nincs"))),
+                  h("span", { class: "small muted" }, "várakozás:"), waitIn, h("span", { class: "small muted" }, "perc")),
+                h("span", { class: "hint" }, "hiba vagy időtúllépés után; értesítés csak az utolsó sikertelen próbálkozás után")),
+              h("div", { style: { flex: 1, minWidth: "240px" } }, field("További NodePit kapcsolók (haladó)", txt("extraArgs", { class: "input mono", placeholder: "pl. --preferences \"C:\\knime\\prefs.epf\"", spellcheck: false })))),
+            h("div", { class: "field", style: { marginTop: "10px" } }, "KNIME munkaterület (haladó)",
+              h("div", { class: "row" }, txt("workspace", { class: "input mono grow kn-ws", placeholder: "üresen: minden futás új, ideiglenes munkaterületen (ajánlott)", spellcheck: false }),
+                h("button", { class: "btn", type: "button", onclick: async () => { try { const r = await api("knimeBrowseWorkflow", { file: false, current: j.workspace || "" }); if (r.path) { j.workspace = r.path; $(".kn-ws", ov).value = r.path; } } catch (e) { fail(e); } } }, icon("folder"), "Mappa…")),
+              h("span", { class: "hint" }, "Csak ha a workflow knime://LOCAL/ útvonalat vagy a munkaterület beállításait használja. Az ugyanilyen munkaterületű futások egymás után futnak, és a munkaterület közben nem lehet nyitva a KNIME ablakban."))),
           err),
         h("div", { class: "side" }, preview)),
       h("div", { class: "m-foot" },

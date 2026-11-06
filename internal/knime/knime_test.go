@@ -58,6 +58,15 @@ func TestHelperProcess(t *testing.T) {
 	case "slow":
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "badparam":
+		os.Exit(10)
+	case "flaky": // fails the first time, then succeeds
+		mark := filepath.Join(args[len(args)-1], "tried")
+		if _, err := os.Stat(mark); err != nil {
+			os.WriteFile(mark, nil, 0o644)
+			os.Exit(30)
+		}
+		os.Exit(0)
 	}
 	os.Exit(50)
 }
@@ -150,7 +159,7 @@ func TestInspectZip(t *testing.T) {
 		t.Fatal(u)
 	}
 	a := DirectorArgs("REPO", false)
-	if strings.Join(a, " ") != "-nosplash --launcher.suppressErrors -consoleLog -application org.eclipse.equinox.p2.director -installIU com.nodepit.batch.feature.feature.group -repository REPO" {
+	if strings.Join(a, " ") != "-nosplash --launcher.suppressErrors -consoleLog -data @none -application org.eclipse.equinox.p2.director -installIU com.nodepit.batch.feature.feature.group -repository REPO" {
 		t.Fatal(a)
 	}
 }
@@ -158,7 +167,7 @@ func TestInspectZip(t *testing.T) {
 func TestBuildArgs(t *testing.T) {
 	j := Job{Reset: true, Variables: []Variable{{"datum", "2026-11-06", "String"}, {"n", "5", "int"}},
 		Credentials: []Credential{{Name: "bi", Login: "d.admin", HasPassword: true}}, ExtraArgs: `--preferences "C:\a b\p.epf"`}
-	got := strings.Join(BuildArgs(j, "WS", "WF", map[string]string{"bi": "titok"}, false), " | ")
+	got := strings.Join(BuildArgs(j, "WS", "WF", map[string]string{"bi": "titok"}, false, "C:\\x.epf"), " | ")
 	want := "-nosplash | --launcher.suppressErrors | -application | " + AppID + " | -data | WS | --reset | --no-save | --variable=datum;2026-11-06;String | --variable=n;5;int | --credential=bi;d.admin;titok | --preferences | C:\\a b\\p.epf | WF"
 	if got != want {
 		t.Fatalf("\n%s\n%s", got, want)
@@ -224,7 +233,7 @@ func newHarness(t *testing.T, setup ...func(*Runner)) *harness {
 		f(h.r)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	t.Cleanup(func() { h.r.Stop(10 * time.Second); cancel() }) // like the program exit
 	h.r.Start(ctx)
 	return h
 }
@@ -335,8 +344,10 @@ func TestSchedulerTick(t *testing.T) {
 		j.Scheduled, j.Enabled = true, true
 		j.Schedule = schedule.Spec{Type: schedule.Daily, Times: []string{"07:50", "10:35"}}
 	})
-	h.r.Tick() // first tick: remembers yesterday's 10:35, runs nothing
-	if len(h.st.Runs(j.ID, 0)) != 0 || h.st.LastDue(j.ID).IsZero() {
+	_, err := h.st.SaveJob(j, clk.Now()) // saved at 07:00
+	must(t, err)
+	h.r.Tick() // first tick: yesterday's 10:35 is before the save, nothing runs
+	if len(h.st.Runs(j.ID, 0)) != 0 {
 		t.Fatal("first tick must not run")
 	}
 	if n := h.r.Next(j); !n.Equal(time.Date(2026, 11, 6, 7, 50, 0, 0, loc)) {
@@ -406,5 +417,259 @@ func TestRelativeStoreDir(t *testing.T) {
 	must(t, err)
 	if !filepath.IsAbs(st.Dir()) {
 		t.Fatal(st.Dir())
+	}
+}
+
+func TestRetries(t *testing.T) {
+	h := newHarness(t) // 1 minute = 100 ms here
+	// always failing: 1 + 2 tries, only the last one is final
+	fail := h.job(t, "fail30", func(j *Job) { j.RetryCount, j.RetryWaitMin = 2, 1 })
+	h.r.Enqueue(fail, "ütemezett", time.Time{})
+	for i := 1; i <= 3; i++ {
+		r := h.wait(t)
+		if r.Status != StatusError || r.Attempt != i || r.Attempts != 3 || r.Trigger != "ütemezett" {
+			t.Fatalf("try %d: %+v", i, r)
+		}
+		if final := i == 3; final != r.NextRetry.IsZero() || final == strings.Contains(r.Message, "Újrapróbálás") {
+			t.Fatalf("try %d next retry: %v %q", i, r.NextRetry, r.Message)
+		}
+	}
+	if _, ok := h.st.PendingRetry(fail.ID); ok {
+		t.Fatal("no retry after the last try")
+	}
+	// fails once, then succeeds
+	flaky := h.job(t, "flaky", func(j *Job) { j.RetryCount, j.RetryWaitMin = 3, 1 })
+	h.r.Enqueue(flaky, "kézi", time.Time{})
+	if r := h.wait(t); r.Status != StatusError || r.NextRetry.IsZero() {
+		t.Fatalf("%+v", r)
+	}
+	if r := h.wait(t); r.Status != StatusOK || r.Attempt != 2 {
+		t.Fatalf("%+v", r)
+	}
+	// wrong parameters (10) and runs stopped by hand are not retried
+	bad := h.job(t, "badparam", func(j *Job) { j.RetryCount = 2 })
+	h.r.Enqueue(bad, "kézi", time.Time{})
+	if r := h.wait(t); r.Status != StatusError || !r.NextRetry.IsZero() {
+		t.Fatalf("%+v", r)
+	}
+	slow := h.job(t, "slow", func(j *Job) { j.RetryCount = 2 })
+	run, _ := h.r.Enqueue(slow, "kézi", time.Time{})
+	time.Sleep(300 * time.Millisecond)
+	h.r.Cancel(run.ID)
+	if r := h.wait(t); r.Status != StatusCanceled || !r.NextRetry.IsZero() {
+		t.Fatalf("%+v", r)
+	}
+	// a manual run replaces a pending retry; cancelling drops it
+	h.st.SetRetry(fail.ID, Retry{At: time.Now().Add(time.Hour), Attempt: 2, Of: 3})
+	if !h.r.CancelRetry(fail.ID) || h.r.CancelRetry(fail.ID) {
+		t.Fatal("cancel retry")
+	}
+	h.st.SetRetry(fail.ID, Retry{At: time.Now().Add(time.Hour), Attempt: 2, Of: 3})
+	h.r.Enqueue(fail, "kézi", time.Time{})
+	if _, ok := h.st.PendingRetry(fail.ID); ok {
+		t.Fatal("a new run must replace the pending retry")
+	}
+	h.wait(t)
+	for len(h.doneCh) > 0 || func() bool { _, ok := h.st.PendingRetry(fail.ID); return ok }() {
+		h.r.CancelRetry(fail.ID)
+		select {
+		case <-h.doneCh:
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// A pending retry survives a restart; a stale one is recorded, not run.
+func TestRetryAfterRestart(t *testing.T) {
+	h := newHarness(t)
+	j := h.job(t, "ok", func(j *Job) { j.RetryCount = 1 })
+	must(t, h.st.SetRetry(j.ID, Retry{At: time.Now().Add(-time.Second), Attempt: 2, Of: 2, Trigger: "ütemezett"}))
+	st2, err := OpenStore(h.st.Dir())
+	must(t, err)
+	if rt, ok := st2.PendingRetry(j.ID); !ok || rt.Attempt != 2 {
+		t.Fatal("retry not kept")
+	}
+	h.r.Tick()
+	if r := h.wait(t); r.Status != StatusOK || r.Attempt != 2 || r.Trigger != "ütemezett" {
+		t.Fatalf("%+v", r)
+	}
+	must(t, h.st.SetRetry(j.ID, Retry{At: time.Now().Add(-13 * time.Hour), Attempt: 2, Of: 2}))
+	h.r.Tick()
+	if r := h.wait(t); r.Status != StatusMissed || !strings.Contains(r.Message, "elmaradt") {
+		t.Fatalf("%+v", r)
+	}
+	// paused job: the retry is dropped
+	j.Scheduled, j.Enabled = true, false
+	j.Schedule = schedule.Spec{Type: schedule.Daily, Times: []string{"06:00"}}
+	_, err = h.st.SaveJob(j, time.Now())
+	must(t, err)
+	must(t, h.st.SetRetry(j.ID, Retry{At: time.Now().Add(-time.Second), Attempt: 2, Of: 2}))
+	h.r.Tick()
+	if _, ok := h.st.PendingRetry(j.ID); ok || len(h.r.Live()) != 0 {
+		t.Fatal("a paused job must not retry")
+	}
+	if Validate(&Job{Name: "a", Workflow: "x", RetryCount: 6}) == nil {
+		t.Fatal("at most 5 retries")
+	}
+	v := Job{Name: "a", Workflow: "x", RetryCount: 2}
+	if Validate(&v) != nil || v.RetryWaitMin != 5 {
+		t.Fatalf("default wait: %+v", v)
+	}
+}
+
+// Regression tests of the review findings.
+
+// A double click (or a click at the scheduled time) must not start a job twice.
+func TestEnqueueConcurrent(t *testing.T) {
+	h := newHarness(t)
+	j := h.job(t, "slow", nil)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	okCount := 0
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := h.r.Enqueue(j, "kézi", time.Time{}); err == nil {
+				mu.Lock()
+				okCount++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if okCount != 1 || len(h.r.Live()) != 1 {
+		t.Fatalf("started %d times, live %d", okCount, len(h.r.Live()))
+	}
+	time.Sleep(300 * time.Millisecond) // running now
+	h.r.Cancel(h.r.Live()[0].ID)
+	h.wait(t)
+}
+
+// A password split over two writes is still masked; Flush writes the rest.
+func TestMaskSplitWrites(t *testing.T) {
+	var b strings.Builder
+	w := &tailWriter{w: &b, max: 1 << 10, masks: []string{"Titok123"}}
+	w.Write([]byte("--credential=bi;d.admin;Tit"))
+	w.Write([]byte("ok123\nkovetkezo sor Tito"))
+	w.Write([]byte("k123 vege"))
+	w.Flush()
+	if strings.Contains(b.String(), "Titok123") || strings.Count(b.String(), "••••") != 2 || !strings.HasSuffix(b.String(), "vege") {
+		t.Fatalf("%q", b.String())
+	}
+	if strings.Contains(w.String(), "Titok123") {
+		t.Fatal("tail")
+	}
+}
+
+// At program exit the running KNIME is stopped and waited for; nothing new
+// starts afterwards.
+func TestStopWaitsForRuns(t *testing.T) {
+	h := newHarness(t)
+	j := h.job(t, "slow", nil)
+	h.r.Enqueue(j, "kézi", time.Time{})
+	time.Sleep(300 * time.Millisecond)
+	start := time.Now()
+	h.r.Stop(10 * time.Second)
+	if d := time.Since(start); d > 8*time.Second {
+		t.Fatalf("stop took %v", d)
+	}
+	if r := h.wait(t); r.Status != StatusCanceled {
+		t.Fatalf("%+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(h.st.Dir(), "munka")); err == nil {
+		if ents, _ := os.ReadDir(filepath.Join(h.st.Dir(), "munka")); len(ents) != 0 {
+			t.Fatal("temporary workspace left behind")
+		}
+	}
+	ok := h.job(t, "ok", nil)
+	h.r.Enqueue(ok, "kézi", time.Time{})
+	h.r.Tick()
+	time.Sleep(300 * time.Millisecond)
+	if live := h.r.Live(); len(live) != 1 || live[0].Status != StatusQueued {
+		t.Fatalf("nothing may start after Stop: %+v", live)
+	}
+}
+
+// While NodePit Batch is installed, queued runs wait.
+func TestHold(t *testing.T) {
+	h := newHarness(t)
+	h.r.Hold(true)
+	j := h.job(t, "ok", nil)
+	h.r.Enqueue(j, "kézi", time.Time{})
+	time.Sleep(400 * time.Millisecond)
+	if live := h.r.Live(); len(live) != 1 || live[0].Status != StatusQueued {
+		t.Fatalf("%+v", live)
+	}
+	h.r.Hold(false)
+	if r := h.wait(t); r.Status != StatusOK {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// Runs in the same own workspace never overlap (Parallel = 2 here).
+func TestOwnWorkspaceSerialized(t *testing.T) {
+	h := newHarness(t)
+	ws := filepath.Join(h.root, "ws")
+	must(t, os.MkdirAll(ws, 0o755))
+	a := h.job(t, "slow", func(j *Job) { j.Workspace = ws })
+	b := h.job(t, "ok", func(j *Job) { j.Workspace = ws + string(filepath.Separator) })
+	c := h.job(t, "ok2", func(j *Job) { j.Workflow = workflow(t, h.root, "ok") })
+	h.r.Enqueue(a, "kézi", time.Time{})
+	time.Sleep(300 * time.Millisecond)
+	h.r.Enqueue(b, "kézi", time.Time{})
+	h.r.Enqueue(c, "kézi", time.Time{})
+	if r := h.wait(t); r.JobID != c.ID || r.Status != StatusOK {
+		t.Fatalf("the run with a temporary workspace goes ahead: %+v", r)
+	}
+	if live := h.r.Live(); len(live) != 2 {
+		t.Fatalf("b must wait for a: %+v", live)
+	}
+	h.r.Cancel(h.r.Live()[0].ID)
+	for i := 0; i < 2; i++ {
+		r := h.wait(t)
+		if r.JobID == b.ID {
+			logText, _ := os.ReadFile(h.st.LogPath(r.Log))
+			if r.Status != StatusOK || !strings.Contains(string(logText), "-data "+ws) {
+				t.Fatalf("%+v\n%s", r, logText)
+			}
+		}
+	}
+	bad := h.job(t, "ok3", func(j *Job) { j.Workspace = filepath.Join(h.root, "nincs"); j.Workflow = workflow(t, h.root, "ok") })
+	h.r.Enqueue(bad, "kézi", time.Time{})
+	if r := h.wait(t); r.Status != StatusError || !strings.Contains(r.Message, "munkaterület") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// A schedule saved at 05:59:50 for 06:00 runs at 06:00 (the first look of
+// the scheduler is after the time).
+func TestFirstTickAfterSave(t *testing.T) {
+	loc := time.UTC
+	clk := &clock{t: time.Date(2026, 11, 9, 5, 59, 50, 0, loc)} // Monday
+	h := newHarness(t, func(r *Runner) { r.Now, r.Location = clk.Now, loc })
+	j := Job{Name: "x", Workflow: workflow(t, h.root, "ok"), Scheduled: true, Enabled: true,
+		Schedule: schedule.Spec{Type: schedule.Daily, Times: []string{"06:00"}}}
+	j, err := h.st.SaveJob(j, clk.Now())
+	must(t, err)
+	clk.Set(time.Date(2026, 11, 9, 6, 0, 5, 0, loc))
+	h.r.Tick()
+	if r := h.wait(t); r.Status != StatusOK || r.Trigger != "ütemezett" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestValidateCopyAndSave(t *testing.T) {
+	if err := Validate(&Job{Name: "a", Workflow: "x", Copy: true, Save: true}); err == nil {
+		t.Fatal("copy + save must be refused")
+	}
+}
+
+// The preferences file of the settings goes to every run, unless the job sets one.
+func TestPreferencesArg(t *testing.T) {
+	a := strings.Join(BuildArgs(Job{}, "D", "W", nil, false, "p.epf"), " ")
+	b := strings.Join(BuildArgs(Job{ExtraArgs: "--preferences=sajat.epf"}, "D", "W", nil, false, "p.epf"), " ")
+	if !strings.Contains(a, "--preferences p.epf") || strings.Contains(b, "p.epf ") || !strings.Contains(b, "sajat.epf") {
+		t.Fatalf("%s | %s", a, b)
 	}
 }

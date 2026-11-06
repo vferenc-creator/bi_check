@@ -68,6 +68,29 @@ func TestKnimeAPI(t *testing.T) {
 	if s, _ := os.ReadFile(filepath.Join(dir, "settings.json")); strings.Contains(string(s), "knime") || strings.Contains(string(s), "Napi export") {
 		t.Fatal("the KNIME data must not be in settings.json")
 	}
+	// the stored password can be removed; a credential removed and added
+	// again under the same name does not get the old password back
+	saved = call[knime.Job](t, a, "knimeSaveJob", knimeJobSave{Job: saved, Clear: []string{"bi_db"}})
+	if saved.Credentials[0].HasPassword {
+		t.Fatal("password must be cleared")
+	}
+	if _, err := os.Stat(pwFile); !os.IsNotExist(err) {
+		t.Fatal("password file must be removed")
+	}
+	saved = call[knime.Job](t, a, "knimeSaveJob", knimeJobSave{Job: saved, Passwords: map[string]string{"bi_db": "Uj456"}})
+	if !saved.Credentials[0].HasPassword {
+		t.Fatal("new password")
+	}
+	// copy + save together is refused
+	bad2 := saved
+	bad2.Copy, bad2.Save = true, true
+	if _, err := a.Call("knimeSaveJob", mustJSON(knimeJobSave{Job: bad2})); err == nil {
+		t.Fatal("copy + save")
+	}
+	// a preferences file that does not exist is refused
+	if _, err := a.Call("knimeSetConfig", mustJSON(knime.Config{Exe: kd, Preferences: filepath.Join(dir, "nincs.epf")})); err == nil {
+		t.Fatal("missing preferences file")
+	}
 	call[any](t, a, "knimeDeleteJob", idParam{ID: saved.ID})
 	if _, err := os.Stat(pwFile); !os.IsNotExist(err) {
 		t.Fatal("the password must be removed with the job")
