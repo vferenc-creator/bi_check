@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bimonitor/internal/calendar"
@@ -43,8 +44,9 @@ func ExitText(code int) string {
 	return fmt.Sprintf("A KNIME %d-es kóddal állt le.", code)
 }
 
-// BuildArgs is the command line of a run (passwords in pw by credential name).
-func BuildArgs(j Job, data, workflow string, pw map[string]string, consoleLog bool) []string {
+// BuildArgs is the command line of a run (passwords in pw by credential name;
+// prefs: a KNIME preferences file for every run, unless the job sets one).
+func BuildArgs(j Job, data, workflow string, pw map[string]string, consoleLog bool, prefs string) []string {
 	a := []string{"-nosplash", "--launcher.suppressErrors"}
 	if consoleLog {
 		a = append(a, "-consoleLog")
@@ -68,8 +70,23 @@ func BuildArgs(j Job, data, workflow string, pw map[string]string, consoleLog bo
 		}
 		a = append(a, s)
 	}
-	a = append(a, SplitArgs(j.ExtraArgs)...)
+	extra := SplitArgs(j.ExtraArgs)
+	if prefs != "" && !hasOpt(extra, "--preferences", "-ps") {
+		a = append(a, "--preferences", prefs)
+	}
+	a = append(a, extra...)
 	return append(a, workflow)
+}
+
+func hasOpt(args []string, names ...string) bool {
+	for _, a := range args {
+		for _, n := range names {
+			if a == n || strings.HasPrefix(a, n+"=") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SplitArgs splits extra options on spaces, keeping "quoted parts" together.
@@ -117,13 +134,20 @@ type Runner struct {
 
 	unit time.Duration // of TimeoutMin (tests shorten it)
 
-	tickMu sync.Mutex // one scheduler step at a time
+	tickMu  sync.Mutex  // one scheduler step at a time
+	stopped atomic.Bool // the program is exiting: start nothing new
 
-	mu     sync.Mutex
-	queue  []*pending
-	active map[string]*active
-	wake   chan struct{}
+	mu       sync.Mutex
+	queue    []*pending
+	active   map[string]*active
+	reserved map[string]bool // job IDs being queued (between the check and the queue)
+	held     bool            // no new starts (e.g. while NodePit Batch is installed)
+	running  sync.WaitGroup  // run goroutines (Stop waits for them)
+	wake     chan struct{}
 }
+
+// errBusy: the job is already queued or running.
+var errBusy = errors.New("ez a futtatás már fut vagy sorban áll")
 
 type pending struct {
 	run Run
@@ -131,9 +155,22 @@ type pending struct {
 }
 
 type active struct {
-	run      Run
-	cancel   context.CancelFunc
-	canceled bool
+	run       Run
+	cancel    context.CancelFunc
+	canceled  bool
+	workspace string // own workspace in use ("" = temporary)
+}
+
+// workspaceKey identifies a job's own workspace ("" = temporary).
+func workspaceKey(j Job) string {
+	if strings.TrimSpace(j.Workspace) == "" {
+		return ""
+	}
+	p, err := filepath.Abs(strings.TrimSpace(j.Workspace))
+	if err != nil {
+		p = j.Workspace
+	}
+	return strings.ToLower(filepath.Clean(p))
 }
 
 func (r *Runner) now() time.Time {
@@ -166,6 +203,7 @@ func (r *Runner) Start(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
+				r.stopped.Store(true)
 				r.CancelAll()
 				return
 			case <-r.wake:
@@ -203,23 +241,65 @@ func (r *Runner) Busy(jobID string) (Run, bool) {
 			return p.run, true
 		}
 	}
+	if r.reserved[jobID] {
+		return Run{JobID: jobID, Status: StatusQueued}, true
+	}
 	return Run{}, false
 }
 
-// Enqueue queues a run of a job.
+// Enqueue queues a (first) run of a job; it replaces a pending retry.
 func (r *Runner) Enqueue(j Job, trigger string, due time.Time) (Run, error) {
-	if cur, busy := r.Busy(j.ID); busy {
-		return cur, errors.New("ez a futtatás már fut vagy sorban áll")
+	run, err := r.enqueue(j, trigger, due, 1)
+	if err == nil && r.Store.ClearRetry(j.ID) {
+		r.changed()
 	}
-	run := Run{ID: NewID(), JobID: j.ID, JobName: j.Name, Trigger: trigger, Due: due, Queued: r.now(), Status: StatusQueued}
+	return run, err
+}
+
+func (r *Runner) enqueue(j Job, trigger string, due time.Time, attempt int) (Run, error) {
+	// check and reserve in one step: a double click or a click at the
+	// scheduled time must not start the job twice
+	r.mu.Lock()
+	for _, a := range r.active {
+		if a.run.JobID == j.ID {
+			cur := a.run // copied under the lock
+			r.mu.Unlock()
+			return cur, errBusy
+		}
+	}
+	for _, p := range r.queue {
+		if p.run.JobID == j.ID {
+			cur := p.run
+			r.mu.Unlock()
+			return cur, errBusy
+		}
+	}
+	if r.reserved[j.ID] {
+		r.mu.Unlock()
+		return Run{JobID: j.ID}, errBusy
+	}
+	if r.reserved == nil {
+		r.reserved = map[string]bool{}
+	}
+	r.reserved[j.ID] = true
+	r.mu.Unlock()
+	unreserve := func() {
+		r.mu.Lock()
+		delete(r.reserved, j.ID)
+		r.mu.Unlock()
+	}
+	run := Run{ID: NewID(), JobID: j.ID, JobName: j.Name, Trigger: trigger, Due: due, Queued: r.now(), Status: StatusQueued,
+		Attempt: attempt, Attempts: j.RetryCount + 1}
 	if err := r.Store.PutRun(run); err != nil {
-		return run, err
+		unreserve()
+		return run, fmt.Errorf("a futás nem rögzíthető: %w", err)
 	}
 	r.mu.Lock()
 	if r.active == nil {
 		r.active = map[string]*active{}
 	}
 	r.queue = append(r.queue, &pending{run: run, job: j})
+	delete(r.reserved, j.ID)
 	r.mu.Unlock()
 	r.changed()
 	r.poke()
@@ -247,6 +327,31 @@ func (r *Runner) Cancel(runID string) bool {
 	}
 	r.mu.Unlock()
 	return a != nil
+}
+
+// Hold stops (true) or allows (false) starting queued runs; runs already
+// going continue. Used while NodePit Batch is (re)installed.
+func (r *Runner) Hold(on bool) {
+	r.mu.Lock()
+	r.held = on
+	r.mu.Unlock()
+	if !on {
+		r.poke()
+	}
+}
+
+// Stop ends the runner at program exit: nothing new starts, the running
+// KNIME processes are stopped and waited for (at most timeout), so no
+// KNIME is left running and the temporary workspaces are removed.
+func (r *Runner) Stop(timeout time.Duration) {
+	r.stopped.Store(true)
+	r.CancelAll()
+	done := make(chan struct{})
+	go func() { r.running.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 // CancelAll stops everything (program exit).
@@ -286,12 +391,33 @@ func (r *Runner) dispatch() {
 		if r.active == nil {
 			r.active = map[string]*active{}
 		}
-		if len(r.queue) == 0 || len(r.active) >= r.Store.Config().Parallel {
+		if len(r.queue) == 0 || r.held || r.stopped.Load() || len(r.active) >= r.Store.Config().Parallel {
 			r.mu.Unlock()
 			return
 		}
-		p := r.queue[0]
-		r.queue = r.queue[1:]
+		// the first queued run whose own workspace is free (a KNIME
+		// workspace can be used by one KNIME at a time)
+		pick := -1
+		for i, q := range r.queue {
+			ws := workspaceKey(q.job)
+			free := true
+			for _, a := range r.active {
+				if ws != "" && a.workspace == ws {
+					free = false
+					break
+				}
+			}
+			if free {
+				pick = i
+				break
+			}
+		}
+		if pick < 0 {
+			r.mu.Unlock()
+			return
+		}
+		p := r.queue[pick]
+		r.queue = append(r.queue[:pick:pick], r.queue[pick+1:]...)
 		unit := r.unit
 		if unit == 0 {
 			unit = time.Minute
@@ -305,14 +431,17 @@ func (r *Runner) dispatch() {
 			ctx, cancel = context.WithCancel(context.Background())
 		}
 		p.run.Status, p.run.Started = StatusRunning, r.now()
-		a := &active{run: p.run, cancel: cancel}
+		a := &active{run: p.run, cancel: cancel, workspace: workspaceKey(p.job)}
 		r.active[p.run.ID] = a
+		r.running.Add(1)
 		r.mu.Unlock()
 		_ = r.Store.PutRun(p.run)
 		r.changed()
 		go func() {
+			defer r.running.Done()
 			defer cancel()
 			run := r.execute(ctx, a, p.job)
+			r.planRetry(&run, p.job)
 			r.mu.Lock()
 			delete(r.active, run.ID)
 			r.mu.Unlock()
@@ -324,6 +453,45 @@ func (r *Runner) dispatch() {
 			r.poke()
 		}()
 	}
+}
+
+// Retryable: failures and timeouts, but not wrong parameters (exit code 10:
+// the same input fails again) and not runs stopped by hand or at exit.
+func Retryable(run Run) bool {
+	switch run.Status {
+	case StatusError, StatusTimeout:
+		return run.ExitCode == nil || *run.ExitCode != 10
+	}
+	return false
+}
+
+// planRetry schedules the next try of a failed run (if the job allows more).
+func (r *Runner) planRetry(run *Run, j Job) {
+	if !Retryable(*run) || run.Attempt < 1 || run.Attempt > j.RetryCount {
+		return
+	}
+	unit := r.unit
+	if unit == 0 {
+		unit = time.Minute
+	}
+	wait := time.Duration(max(j.RetryWaitMin, 1)) * unit
+	at := r.now().Add(wait)
+	rt := Retry{At: at, Attempt: run.Attempt + 1, Of: j.RetryCount + 1, Trigger: run.Trigger, Due: run.Due}
+	if err := r.Store.SetRetry(j.ID, rt); err != nil {
+		return
+	}
+	run.NextRetry = at
+	run.Message += fmt.Sprintf("\nÚjrapróbálás %s-kor (%d/%d. próbálkozás).", at.In(r.loc()).Format("15:04"), rt.Attempt, rt.Of)
+	time.AfterFunc(wait, func() { r.Tick() })
+}
+
+// CancelRetry drops the pending retry of a job.
+func (r *Runner) CancelRetry(jobID string) bool {
+	ok := r.Store.ClearRetry(jobID)
+	if ok {
+		r.changed()
+	}
+	return ok
 }
 
 // execute runs one job and returns the finished run.
@@ -339,10 +507,20 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 		return finish(StatusError, "Nincs beállítva a KNIME (KNIME menü → KNIME és NodePit Batch).")
 	}
 	work := filepath.Join(r.Store.Dir(), "munka", run.ID)
-	defer os.RemoveAll(work)
+	defer removeAll(work)
 	data := filepath.Join(work, "workspace")
 	if err := os.MkdirAll(data, 0o755); err != nil {
 		return finish(StatusError, "Az ideiglenes munkamappa nem hozható létre: "+err.Error())
+	}
+	if ws := strings.TrimSpace(j.Workspace); ws != "" {
+		abs, err := filepath.Abs(ws)
+		if err != nil {
+			abs = ws
+		}
+		if st, err := os.Stat(abs); err != nil || !st.IsDir() {
+			return finish(StatusError, "A megadott KNIME munkaterület nem található: "+ws)
+		}
+		data = abs
 	}
 	wf, err := workflowPath(j.Workflow)
 	if err != nil {
@@ -367,7 +545,8 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 			pw[c.Name] = p
 		}
 	}
-	args := BuildArgs(j, data, wf, pw, r.Store.Config().ConsoleLog)
+	cfg := r.Store.Config()
+	args := BuildArgs(j, data, wf, pw, cfg.ConsoleLog, strings.TrimSpace(cfg.Preferences))
 	run.Log = run.ID + ".log"
 	lf, err := os.Create(r.Store.LogPath(run.Log))
 	if err != nil {
@@ -391,16 +570,30 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	if cmd.Dir == "" {
 		cmd.Dir = filepath.Dir(exe)
 	}
-	runErr := cmd.Run()
+	runErr := cmd.Start()
+	if runErr == nil {
+		// Windows: the KNIME process tree dies with the BI Monitor
+		release := killWithParent(cmd)
+		runErr = cmd.Wait()
+		release()
+	}
 	code := -1
 	if cmd.ProcessState != nil {
 		code = cmd.ProcessState.ExitCode()
 	}
+	out.Flush()
 	// through the masking writer: knime.log may repeat the arguments
 	appendKnimeLog(out, filepath.Join(data, ".metadata", "knime", "knime.log"))
+	out.Flush()
 	text := out.String()
+	r.mu.Lock()
+	canceled := a.canceled
+	r.mu.Unlock()
 	switch {
-	case a.canceled:
+	case cmd.ProcessState != nil && code == 0:
+		// finished successfully, even if a stop or the time limit came
+		// at the very same moment
+	case canceled:
 		return finish(StatusCanceled, "Megszakítva.")
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return finish(StatusTimeout, fmt.Sprintf("Időtúllépés: %d perc után leállítva.", j.TimeoutMin))
@@ -411,6 +604,10 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	run.ExitCode = &c
 	if code == 0 {
 		return finish(StatusOK, ExitText(0))
+	}
+	if ws := strings.TrimSpace(j.Workspace); ws != "" && strings.Contains(strings.ToLower(text), "workspace") &&
+		(strings.Contains(strings.ToLower(text), "in use") || strings.Contains(strings.ToLower(text), "locked")) {
+		text += "\nA munkaterület foglalt: valószínűleg nyitva van a KNIME ablakban."
 	}
 	msg := ExitText(code)
 	if hint := hintFrom(text); hint != "" {
@@ -527,36 +724,80 @@ func mask(s string, pw map[string]string) string {
 }
 
 // tailWriter writes through and keeps the last max bytes for evaluation.
-// Passwords (masks) never reach the log.
+// Passwords (masks) never reach the log: the output is masked line by line
+// (a password may arrive split over two writes), the rest of an unfinished
+// line waits for the next write or Flush.
 type tailWriter struct {
 	mu    sync.Mutex
 	w     io.Writer
 	buf   []byte
 	max   int
 	masks []string
+	pend  []byte
 }
 
 func (t *tailWriter) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	q := p
-	for _, m := range t.masks {
-		q = []byte(strings.ReplaceAll(string(q), m, "••••"))
+	t.pend = append(t.pend, p...)
+	cut := -1
+	for i := len(t.pend) - 1; i >= 0; i-- {
+		if t.pend[i] == '\n' {
+			cut = i + 1
+			break
+		}
 	}
-	t.buf = append(t.buf, q...)
+	if cut < 0 && len(t.pend) < 64<<10 {
+		return len(p), nil // wait for the end of the line
+	}
+	if cut < 0 {
+		cut = len(t.pend)
+	}
+	if err := t.emit(t.pend[:cut]); err != nil {
+		return 0, err
+	}
+	t.pend = append([]byte(nil), t.pend[cut:]...)
+	return len(p), nil
+}
+
+// Flush writes the unfinished last line.
+func (t *tailWriter) Flush() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.pend) > 0 {
+		_ = t.emit(t.pend)
+		t.pend = nil
+	}
+}
+
+func (t *tailWriter) emit(b []byte) error {
+	s := string(b)
+	for _, m := range t.masks {
+		s = strings.ReplaceAll(s, m, "••••")
+	}
+	t.buf = append(t.buf, s...)
 	if len(t.buf) > t.max {
 		t.buf = t.buf[len(t.buf)-t.max:]
 	}
-	if _, err := t.w.Write(q); err != nil {
-		return 0, err
-	}
-	return len(p), nil
+	_, err := io.WriteString(t.w, s)
+	return err
 }
 
 func (t *tailWriter) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return string(t.buf)
+}
+
+// removeAll deletes a temporary folder; on Windows Java may still hold its
+// files for a moment after the process ended.
+func removeAll(dir string) {
+	for i := 0; i < 10; i++ {
+		if err := os.RemoveAll(dir); err == nil {
+			return
+		}
+		time.Sleep(time.Duration(i+1) * 200 * time.Millisecond)
+	}
 }
 
 func copyDir(src, dst string) error {
@@ -593,6 +834,9 @@ func copyDir(src, dst string) error {
 // remembers the last instant (no catching up after saving); instants more
 // than CatchUp old (the program was not running) are recorded as missed.
 func (r *Runner) Tick() {
+	if r.stopped.Load() {
+		return
+	}
 	r.tickMu.Lock()
 	defer r.tickMu.Unlock()
 	now := r.now()
@@ -610,8 +854,12 @@ func (r *Runner) Tick() {
 		}
 		last := r.Store.LastDue(j.ID)
 		if last.IsZero() {
-			_ = r.Store.SetLastDue(j.ID, prev)
-			continue
+			// first look after saving: instants after the save are due,
+			// earlier ones are not caught up
+			last = j.Updated
+			if last.IsZero() || last.After(now) {
+				last = now
+			}
 		}
 		if !prev.After(last) {
 			continue
@@ -630,10 +878,46 @@ func (r *Runner) Tick() {
 			if _, err := r.Enqueue(j, "ütemezett", prev); err != nil {
 				run := Run{ID: NewID(), JobID: j.ID, JobName: j.Name, Trigger: "ütemezett", Due: prev, Queued: now, Ended: now, Status: StatusSkipped,
 					Message: "Kihagyva: az előző futás még tart."}
+				if !errors.Is(err, errBusy) {
+					run.Status, run.Message = StatusError, "Nem indítható: "+err.Error()
+				}
 				_ = r.Store.PutRun(run)
 				if r.OnFinish != nil {
 					r.OnFinish(run, j)
 				}
+			}
+		}
+		r.changed()
+	}
+	r.tickRetries(now)
+}
+
+// MaxRetryAge: a retry that was due this long ago (the program was not
+// running) is dropped instead of starting a stale run.
+const MaxRetryAge = 12 * time.Hour
+
+// tickRetries starts the pending retries that are due.
+func (r *Runner) tickRetries(now time.Time) {
+	for id, rt := range r.Store.Retries() {
+		if now.Before(rt.At) {
+			continue
+		}
+		r.Store.ClearRetry(id)
+		j, ok := r.Store.Job(id)
+		switch {
+		case !ok || (j.Scheduled && !j.Enabled):
+			// deleted or paused meanwhile
+		case now.Sub(rt.At) > MaxRetryAge:
+			run := Run{ID: NewID(), JobID: j.ID, JobName: j.Name, Trigger: rt.Trigger, Due: rt.Due, Queued: now, Ended: now, Status: StatusMissed,
+				Attempt: rt.Attempt, Attempts: rt.Of,
+				Message: "Az újrapróbálás elmaradt: a BI Monitor nem futott " + rt.At.In(r.loc()).Format("2006-01-02 15:04") + "-kor."}
+			_ = r.Store.PutRun(run)
+			if r.OnFinish != nil {
+				r.OnFinish(run, j)
+			}
+		default:
+			if _, busy := r.Busy(id); !busy { // a newer run is going anyway
+				_, _ = r.enqueue(j, rt.Trigger, rt.Due, rt.Attempt)
 			}
 		}
 		r.changed()

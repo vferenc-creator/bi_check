@@ -175,6 +175,7 @@ func (a *App) Start() {
 func (a *App) Close() {
 	a.stopTeam() // releases our edit locks on the share
 	a.stopThunderbird()
+	a.stopKnime() // stops and waits for running KNIME workflows
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
