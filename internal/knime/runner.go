@@ -159,6 +159,8 @@ type active struct {
 	cancel    context.CancelFunc
 	canceled  bool
 	workspace string // own workspace in use ("" = temporary)
+	data      string // the run's KNIME workspace (its knime.log: live log)
+	log       string // the run's log file name
 }
 
 // workspaceKey identifies a job's own workspace ("" = temporary).
@@ -371,6 +373,18 @@ func (r *Runner) CancelAll() {
 	}
 }
 
+// LiveLog returns the log file name and the KNIME workspace of a running
+// run (its knime.log grows while the workflow runs).
+func (r *Runner) LiveLog(runID string) (logName, data string, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a := r.active[runID]
+	if a == nil || a.data == "" {
+		return "", "", false
+	}
+	return a.log, a.data, true
+}
+
 // Live returns the queued and running runs.
 func (r *Runner) Live() []Run {
 	r.mu.Lock()
@@ -548,6 +562,9 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	cfg := r.Store.Config()
 	args := BuildArgs(j, data, wf, pw, cfg.ConsoleLog, strings.TrimSpace(cfg.Preferences))
 	run.Log = run.ID + ".log"
+	r.mu.Lock()
+	a.data, a.log = data, run.Log
+	r.mu.Unlock()
 	lf, err := os.Create(r.Store.LogPath(run.Log))
 	if err != nil {
 		return finish(StatusError, "A naplófájl nem hozható létre: "+err.Error())
@@ -602,9 +619,11 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	}
 	c := code
 	run.ExitCode = &c
+	run.NodesExecuted, run.NodesTotal = ParseNodeStates(text)
 	if code == 0 {
 		return finish(StatusOK, ExitText(0))
 	}
+	run.FailedNode = ParseFailedNode(text)
 	if ws := strings.TrimSpace(j.Workspace); ws != "" && strings.Contains(strings.ToLower(text), "workspace") &&
 		(strings.Contains(strings.ToLower(text), "in use") || strings.Contains(strings.ToLower(text), "locked")) {
 		text += "\nA munkaterület foglalt: valószínűleg nyitva van a KNIME ablakban."
@@ -613,8 +632,14 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	if hint := hintFrom(text); hint != "" {
 		msg += " " + hint
 	}
-	if errs := errorLines(text, 3); len(errs) > 0 {
+	if fn := run.FailedNode; fn != nil {
+		// the failed node first: it says what to fix
+		msg += "\nHibás csomópont: " + fn.Name + " (#" + fn.ID + ") – " + fn.Message
+	} else if errs := errorLines(text, 3); len(errs) > 0 {
 		msg += "\n" + strings.Join(errs, "\n")
+	}
+	if run.NodesTotal > 0 {
+		msg += fmt.Sprintf("\nLefutott csomópontok: %d / %d.", run.NodesExecuted, run.NodesTotal)
 	}
 	return finish(StatusError, msg)
 }

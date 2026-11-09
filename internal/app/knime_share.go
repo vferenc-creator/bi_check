@@ -260,10 +260,7 @@ func (a *App) knimeRemoteNotify(remote []knime.Remote, mute bool) {
 			}
 			seen[run.ID] = true
 			if known && final { // not for the history found at the first look
-				msg := run.Message
-				if i := strings.IndexByte(msg, '\n'); i >= 0 {
-					msg = msg[:i]
-				}
+				msg := knimeShortMsg(run.FailedNode, run.Message)
 				notes = append(notes, note{"KNIME (" + who + "): " + run.JobName, msg, NotifyError})
 			}
 		}

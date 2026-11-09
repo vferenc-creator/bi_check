@@ -62,20 +62,21 @@ type SharedJob struct {
 
 // SharedRun is a run without its log.
 type SharedRun struct {
-	ID         string    `json:"id"`
-	JobID      string    `json:"jobId"`
-	JobName    string    `json:"jobName"`
-	Trigger    string    `json:"trigger"`
-	Status     string    `json:"status"`
-	Queued     time.Time `json:"queued"`
-	Started    time.Time `json:"started,omitempty"`
-	Ended      time.Time `json:"ended,omitempty"`
-	DurationMs int64     `json:"durationMs"`
-	ExitCode   *int      `json:"exitCode,omitempty"`
-	Message    string    `json:"message"`
-	Attempt    int       `json:"attempt,omitempty"`
-	Attempts   int       `json:"attempts,omitempty"`
-	NextRetry  time.Time `json:"nextRetry,omitempty"`
+	ID         string      `json:"id"`
+	JobID      string      `json:"jobId"`
+	JobName    string      `json:"jobName"`
+	Trigger    string      `json:"trigger"`
+	Status     string      `json:"status"`
+	Queued     time.Time   `json:"queued"`
+	Started    time.Time   `json:"started,omitempty"`
+	Ended      time.Time   `json:"ended,omitempty"`
+	DurationMs int64       `json:"durationMs"`
+	ExitCode   *int        `json:"exitCode,omitempty"`
+	Message    string      `json:"message"`
+	Attempt    int         `json:"attempt,omitempty"`
+	Attempts   int         `json:"attempts,omitempty"`
+	NextRetry  time.Time   `json:"nextRetry,omitempty"`
+	FailedNode *FailedNode `json:"failedNode,omitempty"`
 }
 
 // ShareRun strips a run for sharing (message: at most 3 lines, 600 chars).
@@ -89,7 +90,7 @@ func ShareRun(r Run) SharedRun {
 	}
 	return SharedRun{ID: r.ID, JobID: r.JobID, JobName: r.JobName, Trigger: r.Trigger, Status: r.Status, Queued: r.Queued,
 		Started: r.Started, Ended: r.Ended, DurationMs: r.DurationMs, ExitCode: r.ExitCode, Message: msg,
-		Attempt: r.Attempt, Attempts: r.Attempts, NextRetry: r.NextRetry}
+		Attempt: r.Attempt, Attempts: r.Attempts, NextRetry: r.NextRetry, FailedNode: r.FailedNode}
 }
 
 // ShareFileName is the file of a computer and user: "EF-BI__d.admin.json".

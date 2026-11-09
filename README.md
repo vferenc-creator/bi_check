@@ -434,7 +434,9 @@ A NodePit Batch telepítése alatt új futás nem indul. Frissítésnél a progr
 - Mentés után az első ütemezett időpont már érvényes (pl. 05:59-kor mentve, 06:00-ra ütemezve fut 06:00-kor); a mentés előtti időpontokat nem pótolja.
 - Ütemezett futás legfeljebb 15 perc késéssel indul el (pl. ha a gép épp felébredt); ha a BI Monitor nem futott az időpontban, a futás „kimaradt” jelzést kap, és nem indul el utólag.
 - **Előzmények**: időpont, eredmény, időtartam, és a NodePit kilépési kódja magyarul: 0 sikeres · 10 hibás paraméter · 20 a workflow nem tölthető be (rossz útvonal, vagy másik KNIME-ban nyitva) · 30 hiba futtatás közben (egy csomópont hibára futott) · 40 mentési hiba · 50 ismeretlen hiba. A hibás futásnál a `knime.log` utolsó ERROR sorai is látszanak.
-- **Napló** (kattintás az előzményre): a parancs (a jelszó kitakarva), a KNIME kimenete és a futás `knime.log`-jának vége.
+- **Napló** (kattintás az előzményre): a parancs (a jelszó kitakarva), a KNIME kimenete és a futás `knime.log`-jának vége. **Futás közben** is megnyitható (a futtatás sorában a napló ikon): a `knime.log` élőben, 2 másodpercenként frissül.
+- **Hibás csomópont**: hibás futásnál a `knime.log` „Execute failed” sorából kiolvassa, melyik csomópont hibázott, és ezt mutatja a táblázatban, az előzményekben és az értesítésben, pl. „Hibás csomópont: DB Reader (#3:12) – Execute failed: Login failed for user …”. Ha a NodePit kiírja a csomópontok állapotát, azt is: „Lefutott csomópontok: 2 / 4”.
+- **Futásidő**: a futtatás sorában kis grafikon az utolsó (legfeljebb 20) sikeres futás idejéről – látszik, ha egy workflow fokozatosan lassul. Ha egy futás a szokásos idő kétszeresénél (és legalább egy percnél) tovább tart, figyelmeztet: „A szokásosnál jóval tovább tart” – lehet, hogy beragadt (élő napló, Leállítás).
 
 ### Más gépek futtatásai (közös mappán át)
 

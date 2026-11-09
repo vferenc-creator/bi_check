@@ -77,11 +77,12 @@ func TestKnimeShare(t *testing.T) {
 	// a new final failure → one notification; a failure with a retry → none yet
 	srv.Runs = append([]knime.SharedRun{
 		{ID: "r3", JobName: "Esti töltés", Status: knime.StatusError, Message: "újrapróbálja", NextRetry: now.Add(time.Minute)},
-		{ID: "r2", JobName: "Esti töltés", Status: knime.StatusError, Message: "Login failed\nrészletek"}}, srv.Runs...)
+		{ID: "r2", JobName: "Esti töltés", Status: knime.StatusError, Message: "Login failed\nrészletek",
+			FailedNode: &knime.FailedNode{Name: "DB Reader", ID: "3:12", Message: "Execute failed: Login failed"}}}, srv.Runs...)
 	write()
 	a.knimeShareStep()
 	a.knimeShareStep()
-	if n := p.notes(); len(n) != 1 || !strings.Contains(n[0], "KNIME (EF-BI): Esti töltés") || !strings.Contains(n[0], "Login failed") || strings.Contains(n[0], "részletek") {
+	if n := p.notes(); len(n) != 1 || !strings.Contains(n[0], "KNIME (EF-BI): Esti töltés") || !strings.Contains(n[0], "Hibás csomópont: DB Reader (#3:12) – Execute failed: Login failed") || strings.Contains(n[0], "részletek") {
 		t.Fatalf("%v", n)
 	}
 	// the server stops reporting → once; reporting again → once

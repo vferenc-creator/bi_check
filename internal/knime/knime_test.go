@@ -49,7 +49,7 @@ func TestHelperProcess(t *testing.T) {
 		logLine("2026-11-06 08:00:01,000 : INFO : main : Workflow executed sucessfully")
 		os.Exit(0)
 	case "fail30":
-		logLine("2026-11-06 08:00:01,000 : ERROR : KNIME-Worker-1 : DB Reader : 3:12 : Execute failed: Login failed for user 'd.admin'")
+		logLine("2026-11-06 08:00:01,000 : ERROR : KNIME-Worker-1-DB Reader 3:12 :  : Node : DB Reader : 3:12 : Execute failed: Login failed for user 'd.admin'")
 		fmt.Println("========= Workflow did not execute sucessfully ============")
 		os.Exit(30)
 	case "locked":
@@ -288,6 +288,9 @@ func TestRunnerOutcomes(t *testing.T) {
 	if r.Status != StatusError || *r.ExitCode != 30 || !strings.Contains(r.Message, "30-as kód") || !strings.Contains(r.Message, "Login failed") {
 		t.Fatalf("%+v", r)
 	}
+	if fn := r.FailedNode; fn == nil || fn.Name != "DB Reader" || fn.ID != "3:12" || !strings.Contains(r.Message, "Hibás csomópont: DB Reader (#3:12) – Execute failed: Login failed") {
+		t.Fatalf("failed node: %+v %q", r.FailedNode, r.Message)
+	}
 
 	locked := h.job(t, "locked", nil)
 	h.r.Enqueue(locked, "kézi", time.Time{})
@@ -318,6 +321,10 @@ func TestRunnerOutcomes(t *testing.T) {
 		t.Fatal("the same job must not be queued twice")
 	}
 	time.Sleep(300 * time.Millisecond)
+	// while it runs: its log and its KNIME workspace (live log)
+	if name, data, ok := h.r.LiveLog(run.ID); !ok || name != run.ID+".log" || !strings.Contains(data, run.ID) {
+		t.Fatalf("live log: %q %q %v", name, data, ok)
+	}
 	if !h.r.Cancel(run.ID) {
 		t.Fatal("cancel")
 	}
@@ -704,5 +711,55 @@ func TestShareFiles(t *testing.T) {
 	must(t, RemoveShared(root, "EF-BI__y.json")) // already gone: no error
 	if rs, _ := ReadShared(t.TempDir(), ""); rs == nil || len(rs) != 0 {
 		t.Fatal("no folder yet: empty, no error")
+	}
+}
+
+func TestParseFailedNode(t *testing.T) {
+	cases := []struct{ text, name, id, msg string }{
+		// KNIME 5 knime.log layout
+		{"2026-11-06 08:00:00,100 : WARN  : main : : Node : CSV Reader : 3:1 : file is empty\n" +
+			"2026-11-06 08:00:01,000 : ERROR : KNIME-Worker-3-DB Reader 3:12 :  : Node : DB Reader : 3:12 : Execute failed: Login failed for user 'd.admin'\n" +
+			"2026-11-06 08:00:01,100 : ERROR : main : : WorkflowManager : Workflow : 3 : Workflow did not execute",
+			"DB Reader", "3:12", "Execute failed: Login failed for user 'd.admin'"},
+		// a shorter layout (no MDC fields)
+		{"2026-11-06 08:00:01,000 : ERROR : KNIME-Worker-1 : DB Reader : 0:5:12 : Execute failed: Connection timed out",
+			"DB Reader", "0:5:12", "Execute failed: Connection timed out"},
+		// no "Execute failed": the last error that names a node
+		{"x : ERROR : main : : Node : Excel Writer : 2:7 : Could not write file\nx : ERROR : main : : Node : Table Writer : 2:9 : disk full",
+			"Table Writer", "2:9", "disk full"},
+	}
+	for _, c := range cases {
+		n := ParseFailedNode(c.text)
+		if n == nil || n.Name != c.name || n.ID != c.id || n.Message != c.msg {
+			t.Fatalf("%+v for %q", n, c.text[:40])
+		}
+	}
+	if ParseFailedNode("x : ERROR : main : : Workflow did not execute") != nil || ParseFailedNode("") != nil {
+		t.Fatal("no node")
+	}
+}
+
+func TestParseNodeStates(t *testing.T) {
+	text := `=================== Executing workflow ====================
+Status of workflow before execution:
+------------------------------------
+  CSV Reader 3:1 (IDLE)
+Status of workflow after execution:
+------------------------------------
+Napi_export 3 (start)
+  "CSV Reader 3:1" (EXECUTED)
+  "Row Filter 3:2" (EXECUTED)
+  Metanode 3:5 - CONFIGURED (start)
+    Column Filter 3:5:1 - EXECUTED
+    DB Reader 3:5:12 - CONFIGURED
+  Metanode 3:5 (end)
+  Excel Writer 3:7: IDLE
+Napi_export 3 (end)
+========= Workflow did not execute sucessfully ============`
+	if e, n := ParseNodeStates(text); e != 3 || n != 6 {
+		t.Fatalf("%d/%d", e, n)
+	}
+	if e, n := ParseNodeStates("no summary"); e != 0 || n != 0 {
+		t.Fatal("none")
 	}
 }
