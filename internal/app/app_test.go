@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,11 +15,21 @@ import (
 
 type testPlatform struct {
 	NullPlatform
+	mu     sync.Mutex
 	toasts []string
 }
 
 func (p *testPlatform) Notify(title, text string, _ NotifyKind) {
+	p.mu.Lock()
 	p.toasts = append(p.toasts, title+": "+text)
+	p.mu.Unlock()
+}
+
+// notes returns a copy of the notifications so far.
+func (p *testPlatform) notes() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.toasts...)
 }
 
 func newTestApp(t *testing.T) (*App, *testPlatform, string) {

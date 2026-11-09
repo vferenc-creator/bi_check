@@ -96,3 +96,20 @@ func TestKnimeAPI(t *testing.T) {
 		t.Fatal("the password must be removed with the job")
 	}
 }
+
+func TestKnimeDurations(t *testing.T) {
+	runs := []knime.Run{ // newest first
+		{Status: knime.StatusOK, DurationMs: 30}, {Status: knime.StatusError, DurationMs: 999},
+		{Status: knime.StatusOK, DurationMs: 10}, {Status: knime.StatusOK, DurationMs: 20}, {Status: knime.StatusOK},
+	}
+	ds, med := knimeDurations(runs)
+	if len(ds) != 3 || ds[0] != 20 || ds[2] != 30 || med != 20 {
+		t.Fatalf("%v %d", ds, med)
+	}
+	if ds, med := knimeDurations(nil); len(ds) != 0 || med != 0 {
+		t.Fatal("empty")
+	}
+	if tailFile("/nincs/ilyen", 5) != "" {
+		t.Fatal("missing file")
+	}
+}

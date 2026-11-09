@@ -18,6 +18,7 @@
 .kn-pill.bad { background: color-mix(in srgb, var(--missing) 14%, transparent); color: var(--missing); }
 .kn-pill.warn { background: color-mix(in srgb, var(--late) 18%, transparent); color: var(--late); }
 .kn-pill.run { background: color-mix(in srgb, var(--waiting) 16%, transparent); color: var(--waiting); }
+.kn-pill[hidden] { display: none; }
 .kn-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: kn-blink 1.2s infinite; }
 @keyframes kn-blink { 50% { opacity: .25; } }
 .kn-table { border: 0; border-radius: 0 0 var(--radius) var(--radius); box-shadow: none; }
@@ -57,6 +58,18 @@
 .kn-list > .btn { justify-self: start; }
 .kn-sblock { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .kn-sh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.kn-sparkw { display: inline-block; margin-left: 8px; vertical-align: middle; }
+.kn-spark { display: block; }
+.kn-spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.kn-share { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.kn-remote { padding: 12px 18px 14px; border-top: 1px solid var(--border); }
+.kn-remote:first-of-type { border-top: 0; }
+.kn-remote.stale .kn-rtable { opacity: .6; }
+.kn-rhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13.5px; }
+.kn-rtable { border: 1px solid var(--border); border-radius: 8px; }
+.kn-rruns { margin-top: 8px; }
+.kn-rruns summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 4px 0; }
+.kn-rruns .kn-run { padding: 6px 4px; }
 @media (max-width: 900px) {
   .kn-row { grid-template-columns: 1fr; }
   .kn-url { margin-left: 0; }

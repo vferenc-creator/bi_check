@@ -52,14 +52,18 @@ function knRender() {
   if (!root) return;
   const v = KN.view;
   const keepScroll = $("#main").scrollTop;
-  clear(root).append(
+  // (the DOM append would print a null as "null": drop the empty parts)
+  clear(root).append(...[
     h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, "KNIME futtatás"), h("div", { class: "sub" }, "KNIME workflow-k futtatása a háttérben, ütemezve vagy kézzel (NodePit Batch)")),
       h("div", { class: "grow" }),
       h("button", { class: "btn primary", onclick: () => knEditor(null), disabled: !knReady(v) }, icon("plus"), "Új futtatás")),
+    // on a computer without own jobs the other computers come first
+    !v.jobs.length && (v.remote || []).length ? knRemoteCard(v) : null,
     knSetupCard(v),
     knJobsCard(v),
-    knRunsCard(v));
+    v.jobs.length || !(v.remote || []).length ? knRemoteCard(v) : null,
+    knRunsCard(v)].filter(Boolean));
   $("#main").scrollTop = keepScroll;
 }
 
@@ -111,9 +115,83 @@ function knSetupCard(v) {
       h("div", { class: "row", style: { gap: "8px", flexBasis: "100%" } }, h("span", { title: "A KNIME ablakban beállított dolgok (pl. adatbázis-meghajtók) a háttérfuttatásnál nincsenek meg. Exportálja őket: KNIME → File → Export Preferences…" }, "KNIME beállításfájl (.epf):"),
         c.preferences ? h("span", { class: "mono small selectable", style: { wordBreak: "break-all" } }, c.preferences) : h("span", { class: "small muted" }, "nincs (ha a workflow adatbázis-meghajtót vagy más KNIME-beállítást használ, adja meg)"),
         h("button", { class: "btn sm", onclick: knBrowsePrefs }, icon("folder"), "Tallózás…"),
-        c.preferences ? h("button", { class: "btn sm ghost", onclick: () => knSaveConfig({ preferences: "" }) }, "Törlés") : null)),
+        c.preferences ? h("button", { class: "btn sm ghost", onclick: () => knSaveConfig({ preferences: "" }) }, "Törlés") : null),
+      knShareOpts(v)),
     h("div", { class: "kn-act" })));
   return h("div", { class: "card kn-card" }, h("div", { class: "card-h" }, icon("knime"), h("h3", {}, "KNIME és NodePit Batch")), body);
+}
+
+// ---- shared folder: our state for the others, the others' runs ------------------
+function knShareOpts(v) {
+  const sh = v.share || {}, c = v.config || {};
+  if (!sh.team) return h("div", { class: "small muted", style: { flexBasis: "100%", lineHeight: 1.45 } },
+    "Közös mappa nincs beállítva: a futtatások állapota csak ezen a gépen látszik. (Közös mód: Beállítások → Közös mód.)");
+  const status = c.noShare ? "kikapcsolva" : !v.jobs.length ? "nincs mit megosztani (ezen a gépen nincs futtatás)"
+    : sh.published ? "megosztva, utoljára " + fmtDateTime(sh.published, true) : "hamarosan…";
+  return h("div", { class: "kn-share", style: { flexBasis: "100%" } },
+    h("label", { class: "switch", title: "A többi gép a közös mappában látja ennek a gépnek a futtatásait (jelszó, változó, napló nélkül)" },
+      h("input", { type: "checkbox", checked: !c.noShare, onchange: e => knSaveConfig({ noShare: !e.target.checked }) }), "Állapot megosztása a közös mappában"),
+    h("span", { class: "small muted" }, status, " · ", h("span", { class: "mono selectable" }, sh.folder)),
+    h("label", { class: "switch", title: "Windows-értesítés, ha egy másik gépen egy futás végleg hibás lett, vagy a gép nem jelentkezik" },
+      h("input", { type: "checkbox", checked: !c.muteRemote, onchange: e => knSaveConfig({ muteRemote: !e.target.checked }) }), "Értesítés a többi gép KNIME-hibáiról"),
+    sh.error ? h("div", { class: "small", style: { color: "var(--missing)", flexBasis: "100%" } }, sh.error) : null);
+}
+
+function knRemoteCard(v) {
+  const sh = v.share || {};
+  if (!sh.team) return null;
+  const card = h("div", { class: "card kn-card" }, h("div", { class: "card-h" }, icon("users"),
+    h("h3", { class: "grow" }, "Más gépek KNIME-futtatásai"), h("span", { class: "small muted" }, "a közös mappából · csak olvasható")));
+  const remote = v.remote || [];
+  if (!remote.length) {
+    card.append(h("div", { class: "card-b" }, h("div", { class: "kn-empty" }, "Egyetlen más gép sem osztja meg a KNIME-futtatásait a közös mappában.")));
+    return card;
+  }
+  for (const rm of remote) {
+    const who = rm.host || rm.file;
+    const head = h("div", { class: "kn-rhead" },
+      h("b", {}, who), rm.user ? h("span", { class: "muted" }, rm.user) : null,
+      rm.error ? h("span", { class: "kn-pill bad" }, "hiba")
+        : rm.stale ? h("span", { class: "kn-pill bad", title: "A BI Monitor azon a gépen nem fut, vagy nem éri el a közös mappát" }, "nem jelentkezik")
+        : h("span", { class: "kn-pill ok" }, h("span", { class: "kn-dot" }), "él"),
+      h("span", { class: "small muted" }, "utoljára " + fmtDateTime(rm.updated, true)),
+      h("div", { class: "grow" }),
+      h("span", { class: "small muted" }, [rm.knime ? "KNIME " + rm.knime : "", rm.nodepit ? "NodePit " + rm.nodepit : "", rm.app ? "BI Monitor " + rm.app : ""].filter(Boolean).join(" · ")));
+    const box = h("div", { class: "kn-remote" + (rm.stale ? " stale" : "") }, head);
+    if (rm.error) { box.append(h("div", { class: "errbox" }, rm.error)); card.append(box); continue; }
+    if (rm.stale) box.append(h("div", { class: "kn-res bad", style: { margin: "0 0 8px" } },
+      "Ez a gép " + fmtDateTime(rm.updated) + " óta nem írt a közös mappába: a BI Monitor ott nem fut, vagy nem éri el a mappát. Az alábbi állapot ekkori, és az ütemezett futtatások most nem biztos, hogy elindulnak."));
+    const tb = h("tbody");
+    for (const j of rm.jobs) {
+      const st = j.live ? j.live.status : j.retry ? "retry" : j.last ? j.last.status : "";
+      const last = j.last;
+      tb.append(h("tr", { class: j.scheduled && !j.enabled ? "off" : "" },
+        h("td", {}, knPill(st)),
+        h("td", {}, h("div", { class: "kn-name" }, j.name), h("div", { class: "mono small muted kn-ell kn-path", title: j.workflow }, h("bdi", {}, j.workflow))),
+        h("td", { class: "small" }, h("div", {}, j.schedule + (j.scheduled && !j.enabled ? " (szünetel)" : "")), j.next ? h("div", { class: "muted" }, "Következő: " + fmtDateTime(j.next)) : null),
+        h("td", { class: "small" }, j.live ? (j.live.status === "running" ? "Fut, indult: " + fmtDateTime(j.live.started) : "Sorban áll")
+          : j.retry ? h("div", {}, "Újrapróbálja: " + fmtDateTime(j.retry.at), last ? h("div", { class: "kn-msg", title: last.message }, knShort(last)) : null)
+          : last ? h("div", {}, fmtDateTime(last.ended || last.queued), last.durationMs ? h("span", { class: "muted" }, " · " + fmtDur(last.durationMs / 1000)) : null,
+            last.status !== "ok" ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knShort(last)) : null) : h("span", { class: "muted" }, "–"))));
+    }
+    if (rm.jobs.length) box.append(h("table", { class: "table kn-table kn-rtable" },
+      h("colgroup", {}, h("col", { style: { width: "120px" } }), h("col"), h("col", { style: { width: "28%" } }), h("col", { style: { width: "28%" } })),
+      h("thead", {}, h("tr", {}, ["Állapot", "Név / workflow", "Ütemezés", "Utolsó futás"].map(t => h("th", { class: "nosort" }, t)))), tb));
+    else box.append(h("div", { class: "kn-empty" }, "Nincs futtatás ezen a gépen."));
+    if (rm.runs.length) {
+      const list = h("div", { class: "kn-runs" });
+      for (const r of rm.runs) list.append(h("div", { class: "kn-run" },
+        h("span", { class: "t" }, fmtDateTime(r.started || r.queued || r.ended)), knPill(r.status),
+        h("span", { class: "n" }, r.jobName),
+        h("span", { class: "muted small" }, r.trigger + (knTry(r) ? " · " + knTry(r) : "") + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
+        h("span", { class: "m " + knMsgCls(r.status), title: r.message }, r.status === "ok" ? "" : knShort(r)), h("span")));
+      const key = "kn-open-" + rm.file;
+      box.append(h("details", { class: "kn-rruns", open: !!KN[key], ontoggle: e => { KN[key] = e.currentTarget.open; } },
+        h("summary", {}, "Utolsó futások (" + rm.runs.length + ")"), list));
+    }
+    card.append(box);
+  }
+  return card;
 }
 
 async function knSaveConfig(patch) {
@@ -177,13 +255,17 @@ function knJobsCard(v) {
       h("td", {}, h("div", { class: "kn-name" }, j.name), h("div", { class: "mono small muted kn-ell kn-path", title: j.workflow }, h("bdi", {}, j.workflow))),
       h("td", { class: "small" }, h("div", {}, jv.scheduleText), jv.next ? h("div", { class: "muted" }, "Következő: " + fmtDateTime(jv.next)) : null),
       h("td", { class: "small" }, live ? h("div", {}, live.status === "running" ? "Fut, indult: " + fmtDateTime(live.started) : "Sorban áll",
-          knTry(live) ? h("span", { class: "muted" }, " · " + knTry(live)) : null)
+          knTry(live) ? h("span", { class: "muted" }, " · " + knTry(live)) : null,
+          knLong(live, jv.median) ? h("div", { class: "kn-msg warn", title: "Lehet, hogy beragadt – nézze meg az élő naplót." },
+            "A szokásosnál jóval tovább tart (általában " + fmtDur(jv.median / 1000) + ")") : null)
         : retry ? h("div", {}, "Hiba után újrapróbálja: " + fmtDateTime(retry.at), h("span", { class: "muted" }, " · " + retry.attempt + "/" + retry.of + ". próbálkozás"),
-          last ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knFirst(last.message)) : null,
+          last ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knShort(last)) : null,
           h("button", { class: "btn sm ghost kn-link", onclick: () => knCancelRetry(j.id) }, "Újrapróbálás törlése"))
         : last ? h("div", {}, fmtDateTime(last.ended || last.queued), last.durationMs ? h("span", { class: "muted" }, " · " + fmtDur(last.durationMs / 1000)) : null,
-          last.status !== "ok" ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knFirst(last.message)) : null) : h("span", { class: "muted" }, "–")),
+          knSpark(jv.durations, jv.median),
+          last.status !== "ok" ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knShort(last)) : null) : h("span", { class: "muted" }, "–")),
       h("td", { class: "kn-btns" },
+        live && live.status === "running" ? h("button", { class: "btn sm icon ghost", title: "Élő napló", onclick: () => knShowLog(live) }, icon("logTxt")) : null,
         live ? h("button", { class: "btn sm", onclick: () => knCancel(live.id) }, icon("stopSq"), "Leállítás")
           : h("button", { class: "btn sm primary", disabled: !knReady(v), onclick: () => knRunNow(j.id) }, icon("play"), "Futtatás most"),
         h("button", { class: "btn sm icon ghost", title: "Szerkesztés", onclick: () => knEditor(j) }, icon("edit")),
@@ -202,9 +284,32 @@ function knJobsCard(v) {
   return card;
 }
 function knFirst(s) { return String(s || "").split("\n")[0]; }
+// the short message of a run: the failed node if known (it says what to fix)
+function knShort(r) {
+  if (r && r.failedNode) return "Hibás csomópont: " + r.failedNode.name + " (#" + r.failedNode.id + ") – " + r.failedNode.message;
+  return knFirst(r && r.message);
+}
+// a small chart of the last successful run times (oldest → newest)
+function knSpark(ds, median) {
+  if (!ds || ds.length < 3) return null;
+  const W = 90, H = 18, max = Math.max(...ds), min = Math.min(...ds), span = Math.max(1, max - min);
+  const pts = ds.map((d, i) => (i * (W - 4) / (ds.length - 1) + 2).toFixed(1) + "," + (H - 2 - (d - min) / span * (H - 4)).toFixed(1)).join(" ");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("class", "kn-spark");
+  const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  pl.setAttribute("points", pts);
+  svg.append(pl);
+  return h("span", { class: "kn-sparkw", title: "Az utolsó " + ds.length + " sikeres futás ideje · szokásos: " + fmtDur(median / 1000) + " · leghosszabb: " + fmtDur(max / 1000) }, svg);
+}
 // red only for real failures; a stop by hand or a skip is not an error
 function knMsgCls(status) { return status === "canceled" || status === "skipped" ? "quiet" : status === "missed" ? "warn" : ""; }
 
+// running for more than twice the usual time (and at least a minute)
+function knLong(live, median) {
+  if (!live || live.status !== "running" || !median || !live.started) return false;
+  const el = Date.now() - new Date(live.started).getTime();
+  return el > 60000 && el > 2 * median;
+}
 async function knRunNow(id) {
   try { await api("knimeRunNow", { id }); toast("Elindítva."); knLoad(); } catch (e) { fail(e); }
 }
@@ -234,7 +339,7 @@ function knRunsCard(v) {
       knPill(r.status),
       h("span", { class: "n" }, r.jobName),
       h("span", { class: "muted small" }, r.trigger + (knTry(r) ? " · " + knTry(r) : "") + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
-      h("span", { class: "m " + knMsgCls(r.status), title: r.message }, r.status === "ok" ? "" : knFirst(r.message)),
+      h("span", { class: "m " + knMsgCls(r.status), title: r.message }, r.status === "ok" ? "" : knShort(r)),
       r.log ? icon("logTxt") : h("span")));
   }
   card.append(list);
@@ -243,20 +348,35 @@ function knRunsCard(v) {
 
 async function knShowLog(r) {
   const pre = h("pre", { class: "kn-pre kn-log" }, "Betöltés…");
-  let unEsc = () => {};
-  const close = () => { unEsc(); ov.remove(); };
+  const liveTag = h("span", { class: "kn-pill run", hidden: true }, h("span", { class: "kn-dot" }), "élő – frissül");
+  let unEsc = () => {}, timer = 0;
+  const close = () => { clearTimeout(timer); unEsc(); ov.remove(); };
   const ov = h("div", { class: "overlay", onclick: e => { if (e.target === ov) close(); } },
     h("div", { class: "modal", style: { width: "1000px" } },
-      h("div", { class: "m-head" }, icon("logTxt"), h("h2", { class: "grow" }, r.jobName + " – " + fmtDateTime(r.started || r.queued)), knPill(r.status),
+      h("div", { class: "m-head" }, icon("logTxt"), h("h2", { class: "grow" }, r.jobName + " – " + fmtDateTime(r.started || r.queued)), liveTag, knPill(r.status),
         h("button", { class: "btn sm icon ghost", onclick: close }, icon("close"))),
-      h("div", { class: "m-body" }, r.message ? h("div", { class: "kn-res " + (r.status === "ok" ? "ok" : "bad"), style: { marginTop: 0, whiteSpace: "pre-line" } }, r.message) : null, pre),
+      h("div", { class: "m-body" }, r.message ? h("div", { class: "kn-res " + (r.status === "ok" ? "ok" : "bad"), style: { marginTop: 0, whiteSpace: "pre-line" } }, r.message) : null,
+        r.nodesTotal ? h("div", { class: "small muted", style: { margin: "6px 0 0" } }, "Lefutott csomópontok: " + r.nodesExecuted + " / " + r.nodesTotal) : null, pre),
       h("div", { class: "m-foot" },
         h("button", { class: "btn", onclick: () => api("knimeOpenLog", { id: r.id }).catch(fail) }, icon("open"), "Megnyitás szövegszerkesztőben"),
         h("div", { class: "grow" }),
         h("button", { class: "btn primary", onclick: close }, "Bezárás"))));
   document.body.append(ov);
   unEsc = knEsc(close);
-  try { pre.textContent = await api("knimeLog", { id: r.id }); pre.scrollTop = pre.scrollHeight; } catch (e) { pre.textContent = e.message || String(e); }
+  // a running run: refresh every 2 s; stay at the bottom unless scrolled up
+  const load = async () => {
+    try {
+      const lv = await api("knimeLog", { id: r.id });
+      if (!document.body.contains(ov)) return;
+      const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+      pre.textContent = lv.text;
+      if (atEnd || !lv.running) pre.scrollTop = pre.scrollHeight;
+      liveTag.hidden = !lv.running;
+      if (lv.running) timer = setTimeout(load, 2000);
+      else if (r.status === "running" || r.status === "queued") { knLoad(); } // finished meanwhile
+    } catch (e) { pre.textContent = e.message || String(e); }
+  };
+  load();
 }
 
 // ---- editor -------------------------------------------------------------------

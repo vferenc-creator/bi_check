@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,8 @@ type knimeState struct {
 
 	mu         sync.Mutex
 	installing bool
+
+	share knimeShareState // state of the runs in the shared folder
 }
 
 func (a *App) knimeDir() string { return filepath.Join(a.cacheDir(), "knime") }
@@ -48,7 +51,7 @@ func (a *App) knimeInit() (*knime.Store, *knime.Runner, error) {
 			Calendar: a.Calendar(),
 			Location: a.Loc,
 			Password: func(jobID, cred string) (string, error) { return secret.Load(st.SecretPath(jobID, cred)) },
-			OnChange: func() { a.P.Push("knime", nil) },
+			OnChange: func() { a.P.Push("knime", nil); a.knimeShareKick() },
 			OnFinish: a.knimeFinished,
 		}
 	})
@@ -61,6 +64,7 @@ func (a *App) startKnime(ctx context.Context) {
 		log.Printf("knime: %v", err)
 	} else {
 		r.Start(ctx)
+		go a.knimeShareLoop(ctx)
 	}
 }
 
@@ -83,7 +87,7 @@ func (a *App) knimeFinished(run knime.Run, j knime.Job) {
 	}
 	switch run.Status {
 	case knime.StatusError, knime.StatusTimeout, knime.StatusMissed:
-		msg := firstLine(run.Message)
+		msg := knimeShortMsg(run.FailedNode, run.Message)
 		if run.Attempt > 1 {
 			msg = fmt.Sprintf("%d próbálkozás után sem sikerült. %s", run.Attempt, msg)
 		}
@@ -107,6 +111,10 @@ type knimeJobView struct {
 	Next  *time.Time   `json:"next,omitempty"`
 	Retry *knime.Retry `json:"retry,omitempty"` // pending new try after a failure
 	Text  string       `json:"scheduleText"`
+	// Durations of the last successful runs (ms, oldest first) and their
+	// median: the trend chart and the "takes longer than usual" hint.
+	Durations []int64 `json:"durations"`
+	Median    int64   `json:"median"`
 }
 
 type knimeView struct {
@@ -117,6 +125,9 @@ type knimeView struct {
 	Runs       []knime.Run    `json:"runs"`
 	Installing bool           `json:"installing"`
 	Dir        string         `json:"dir"`
+	// the shared folder: our publishing and the other computers' runs
+	Share  knimeShareView    `json:"share"`
+	Remote []knimeRemoteView `json:"remote"`
 }
 
 type knimeJobSave struct {
@@ -185,9 +196,11 @@ func (a *App) knimeView() (knimeView, error) {
 		if rt, ok := st.PendingRetry(j.ID); ok {
 			jv.Retry = &rt
 		}
+		jv.Durations, jv.Median = knimeDurations(st.Runs(j.ID, 200))
 		v.Jobs = append(v.Jobs, jv)
 	}
 	v.Runs = st.Runs("", 200)
+	v.Share, v.Remote = a.knimeShareViews()
 	a.kn.mu.Lock()
 	v.Installing = a.kn.installing
 	a.kn.mu.Unlock()
@@ -219,6 +232,7 @@ func (a *App) registerKnimeAPI() {
 		if _, err := st.SetConfig(c); err != nil {
 			return knimeView{}, err
 		}
+		a.knimeShareKick()
 		return a.knimeView()
 	})
 
@@ -237,6 +251,7 @@ func (a *App) registerKnimeAPI() {
 		if _, err := st.SetConfig(c); err != nil {
 			return knimeView{}, err
 		}
+		a.knimeShareKick()
 		return a.knimeView()
 	})
 
@@ -349,6 +364,7 @@ func (a *App) registerKnimeAPI() {
 		saved, err := st.SaveJob(j, time.Now())
 		if err == nil {
 			a.P.Push("knime", nil)
+			a.knimeShareKick()
 		}
 		return saved, err
 	})
@@ -365,6 +381,7 @@ func (a *App) registerKnimeAPI() {
 			return err
 		}
 		a.P.Push("knime", nil)
+		a.knimeShareKick()
 		return nil
 	})
 
@@ -400,23 +417,34 @@ func (a *App) registerKnimeAPI() {
 		return r.CancelRetry(p.ID), nil
 	})
 
-	a.register("knimeLog", func(p idParam) (string, error) {
-		st, _, err := a.knimeInit()
+	// The log of a run; while it runs: what is written so far plus the end
+	// of its growing knime.log (the window refreshes it).
+	a.register("knimeLog", func(p idParam) (knimeLogView, error) {
+		st, r, err := a.knimeInit()
 		if err != nil {
-			return "", err
+			return knimeLogView{}, err
+		}
+		if name, data, live := r.LiveLog(p.ID); live {
+			run, _ := st.Run(p.ID)
+			b, _ := os.ReadFile(st.LogPath(name))
+			text := string(b) + "\n===== knime.log (élő – a futás még tart) =====\n" + tailFile(filepath.Join(data, ".metadata", "knime", "knime.log"), 300)
+			return knimeLogView{Text: a.knimeMask(run.JobID, text), Running: true}, nil
 		}
 		run, ok := st.Run(p.ID)
 		if !ok || run.Log == "" {
-			return "", errors.New("ehhez a futáshoz nincs napló")
+			if ok && (run.Status == knime.StatusQueued || run.Status == knime.StatusRunning) {
+				return knimeLogView{Text: "A futás még nem indult el (sorban áll)…", Running: true}, nil
+			}
+			return knimeLogView{}, errors.New("ehhez a futáshoz nincs napló")
 		}
 		b, err := os.ReadFile(st.LogPath(run.Log))
 		if err != nil {
-			return "", fmt.Errorf("a napló nem olvasható: %w", err)
+			return knimeLogView{}, fmt.Errorf("a napló nem olvasható: %w", err)
 		}
 		if len(b) > 400<<10 {
 			b = append([]byte("… (a napló eleje lemaradt)\n"), b[len(b)-400<<10:]...)
 		}
-		return string(b), nil
+		return knimeLogView{Text: string(b)}, nil
 	})
 
 	a.register("knimeOpenLog", func(p idParam) error {
@@ -538,4 +566,79 @@ func (a *App) knimeInstall(p knimeInstallParam) (knimeInstallResult, error) {
 	}
 	log.Printf("knime: NodePit Batch telepítés – %s", res.Message)
 	return res, nil
+}
+
+type knimeLogView struct {
+	Text    string `json:"text"`
+	Running bool   `json:"running"` // live: the window refreshes it
+}
+
+// knimeMask hides the job's stored passwords in a live log (the finished
+// log is masked by the runner already).
+func (a *App) knimeMask(jobID, text string) string {
+	st, _, err := a.knimeInit()
+	if err != nil {
+		return text
+	}
+	j, ok := st.Job(jobID)
+	if !ok {
+		return text
+	}
+	for _, c := range j.Credentials {
+		if !c.HasPassword {
+			continue
+		}
+		if pw, err := secret.Load(st.SecretPath(jobID, c.Name)); err == nil && pw != "" {
+			text = strings.ReplaceAll(text, pw, "••••")
+		}
+	}
+	return text
+}
+
+// tailFile returns the last n lines of a file ("" if it does not exist yet).
+func tailFile(path string, n int) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if len(b) > 1<<20 {
+		b = b[len(b)-1<<20:]
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// knimeDurations: the durations of the last 20 successful runs (oldest
+// first) and their median.
+func knimeDurations(runs []knime.Run) ([]int64, int64) {
+	out := []int64{}
+	for _, r := range runs { // newest first
+		if r.Status == knime.StatusOK && r.DurationMs > 0 {
+			out = append(out, r.DurationMs)
+			if len(out) == 20 {
+				break
+			}
+		}
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	if len(out) == 0 {
+		return out, 0
+	}
+	s := append([]int64(nil), out...)
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+	return out, s[len(s)/2]
+}
+
+// knimeShortMsg: the failed node if known (it says what to fix), else the
+// first line of the message.
+func knimeShortMsg(fn *knime.FailedNode, msg string) string {
+	if fn != nil {
+		return "Hibás csomópont: " + fn.Name + " (#" + fn.ID + ") – " + fn.Message
+	}
+	return firstLine(msg)
 }

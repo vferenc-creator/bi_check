@@ -91,6 +91,18 @@ type Run struct {
 	Attempt    int       `json:"attempt,omitempty"`  // 1 = first try
 	Attempts   int       `json:"attempts,omitempty"` // tries allowed (1 + retries)
 	NextRetry  time.Time `json:"nextRetry,omitempty"`
+	// FailedNode: the node that failed (from knime.log), if found.
+	FailedNode *FailedNode `json:"failedNode,omitempty"`
+	// Nodes: how many nodes ran (from the status printed after the run).
+	NodesExecuted int `json:"nodesExecuted,omitempty"`
+	NodesTotal    int `json:"nodesTotal,omitempty"`
+}
+
+// FailedNode is the node of the workflow that made the run fail.
+type FailedNode struct {
+	Name    string `json:"name"`
+	ID      string `json:"id"`
+	Message string `json:"message"`
 }
 
 // Retry is a pending new try of a failed run.
@@ -114,6 +126,10 @@ type Config struct {
 	// Preferences: a KNIME preferences file (File → Export Preferences, .epf)
 	// applied to every run (e.g. database drivers set up in the KNIME window).
 	Preferences string `json:"preferences"`
+	// NoShare: do not publish the state of the runs in the shared folder.
+	NoShare bool `json:"noShare"`
+	// MuteRemote: no notifications about the other computers' runs.
+	MuteRemote bool `json:"muteRemote"`
 }
 
 func (c *Config) normalize() {
