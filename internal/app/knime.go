@@ -29,6 +29,8 @@ type knimeState struct {
 
 	mu         sync.Mutex
 	installing bool
+
+	share knimeShareState // state of the runs in the shared folder
 }
 
 func (a *App) knimeDir() string { return filepath.Join(a.cacheDir(), "knime") }
@@ -48,7 +50,7 @@ func (a *App) knimeInit() (*knime.Store, *knime.Runner, error) {
 			Calendar: a.Calendar(),
 			Location: a.Loc,
 			Password: func(jobID, cred string) (string, error) { return secret.Load(st.SecretPath(jobID, cred)) },
-			OnChange: func() { a.P.Push("knime", nil) },
+			OnChange: func() { a.P.Push("knime", nil); a.knimeShareKick() },
 			OnFinish: a.knimeFinished,
 		}
 	})
@@ -61,6 +63,7 @@ func (a *App) startKnime(ctx context.Context) {
 		log.Printf("knime: %v", err)
 	} else {
 		r.Start(ctx)
+		go a.knimeShareLoop(ctx)
 	}
 }
 
@@ -117,6 +120,9 @@ type knimeView struct {
 	Runs       []knime.Run    `json:"runs"`
 	Installing bool           `json:"installing"`
 	Dir        string         `json:"dir"`
+	// the shared folder: our publishing and the other computers' runs
+	Share  knimeShareView    `json:"share"`
+	Remote []knimeRemoteView `json:"remote"`
 }
 
 type knimeJobSave struct {
@@ -188,6 +194,7 @@ func (a *App) knimeView() (knimeView, error) {
 		v.Jobs = append(v.Jobs, jv)
 	}
 	v.Runs = st.Runs("", 200)
+	v.Share, v.Remote = a.knimeShareViews()
 	a.kn.mu.Lock()
 	v.Installing = a.kn.installing
 	a.kn.mu.Unlock()
@@ -219,6 +226,7 @@ func (a *App) registerKnimeAPI() {
 		if _, err := st.SetConfig(c); err != nil {
 			return knimeView{}, err
 		}
+		a.knimeShareKick()
 		return a.knimeView()
 	})
 
@@ -237,6 +245,7 @@ func (a *App) registerKnimeAPI() {
 		if _, err := st.SetConfig(c); err != nil {
 			return knimeView{}, err
 		}
+		a.knimeShareKick()
 		return a.knimeView()
 	})
 
@@ -349,6 +358,7 @@ func (a *App) registerKnimeAPI() {
 		saved, err := st.SaveJob(j, time.Now())
 		if err == nil {
 			a.P.Push("knime", nil)
+			a.knimeShareKick()
 		}
 		return saved, err
 	})
@@ -365,6 +375,7 @@ func (a *App) registerKnimeAPI() {
 			return err
 		}
 		a.P.Push("knime", nil)
+		a.knimeShareKick()
 		return nil
 	})
 

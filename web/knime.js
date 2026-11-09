@@ -57,8 +57,11 @@ function knRender() {
       h("div", {}, h("h1", {}, "KNIME futtatás"), h("div", { class: "sub" }, "KNIME workflow-k futtatása a háttérben, ütemezve vagy kézzel (NodePit Batch)")),
       h("div", { class: "grow" }),
       h("button", { class: "btn primary", onclick: () => knEditor(null), disabled: !knReady(v) }, icon("plus"), "Új futtatás")),
+    // on a computer without own jobs the other computers come first
+    !v.jobs.length && (v.remote || []).length ? knRemoteCard(v) : null,
     knSetupCard(v),
     knJobsCard(v),
+    v.jobs.length || !(v.remote || []).length ? knRemoteCard(v) : null,
     knRunsCard(v));
   $("#main").scrollTop = keepScroll;
 }
@@ -111,9 +114,83 @@ function knSetupCard(v) {
       h("div", { class: "row", style: { gap: "8px", flexBasis: "100%" } }, h("span", { title: "A KNIME ablakban beállított dolgok (pl. adatbázis-meghajtók) a háttérfuttatásnál nincsenek meg. Exportálja őket: KNIME → File → Export Preferences…" }, "KNIME beállításfájl (.epf):"),
         c.preferences ? h("span", { class: "mono small selectable", style: { wordBreak: "break-all" } }, c.preferences) : h("span", { class: "small muted" }, "nincs (ha a workflow adatbázis-meghajtót vagy más KNIME-beállítást használ, adja meg)"),
         h("button", { class: "btn sm", onclick: knBrowsePrefs }, icon("folder"), "Tallózás…"),
-        c.preferences ? h("button", { class: "btn sm ghost", onclick: () => knSaveConfig({ preferences: "" }) }, "Törlés") : null)),
+        c.preferences ? h("button", { class: "btn sm ghost", onclick: () => knSaveConfig({ preferences: "" }) }, "Törlés") : null),
+      knShareOpts(v)),
     h("div", { class: "kn-act" })));
   return h("div", { class: "card kn-card" }, h("div", { class: "card-h" }, icon("knime"), h("h3", {}, "KNIME és NodePit Batch")), body);
+}
+
+// ---- shared folder: our state for the others, the others' runs ------------------
+function knShareOpts(v) {
+  const sh = v.share || {}, c = v.config || {};
+  if (!sh.team) return h("div", { class: "small muted", style: { flexBasis: "100%", lineHeight: 1.45 } },
+    "Közös mappa nincs beállítva: a futtatások állapota csak ezen a gépen látszik. (Közös mód: Beállítások → Közös mód.)");
+  const status = c.noShare ? "kikapcsolva" : !v.jobs.length ? "nincs mit megosztani (ezen a gépen nincs futtatás)"
+    : sh.published ? "megosztva, utoljára " + fmtDateTime(sh.published, true) : "hamarosan…";
+  return h("div", { class: "kn-share", style: { flexBasis: "100%" } },
+    h("label", { class: "switch", title: "A többi gép a közös mappában látja ennek a gépnek a futtatásait (jelszó, változó, napló nélkül)" },
+      h("input", { type: "checkbox", checked: !c.noShare, onchange: e => knSaveConfig({ noShare: !e.target.checked }) }), "Állapot megosztása a közös mappában"),
+    h("span", { class: "small muted" }, status, " · ", h("span", { class: "mono selectable" }, sh.folder)),
+    h("label", { class: "switch", title: "Windows-értesítés, ha egy másik gépen egy futás végleg hibás lett, vagy a gép nem jelentkezik" },
+      h("input", { type: "checkbox", checked: !c.muteRemote, onchange: e => knSaveConfig({ muteRemote: !e.target.checked }) }), "Értesítés a többi gép KNIME-hibáiról"),
+    sh.error ? h("div", { class: "small", style: { color: "var(--missing)", flexBasis: "100%" } }, sh.error) : null);
+}
+
+function knRemoteCard(v) {
+  const sh = v.share || {};
+  if (!sh.team) return null;
+  const card = h("div", { class: "card kn-card" }, h("div", { class: "card-h" }, icon("users"),
+    h("h3", { class: "grow" }, "Más gépek KNIME-futtatásai"), h("span", { class: "small muted" }, "a közös mappából · csak olvasható")));
+  const remote = v.remote || [];
+  if (!remote.length) {
+    card.append(h("div", { class: "card-b" }, h("div", { class: "kn-empty" }, "Egyetlen más gép sem osztja meg a KNIME-futtatásait a közös mappában.")));
+    return card;
+  }
+  for (const rm of remote) {
+    const who = rm.host || rm.file;
+    const head = h("div", { class: "kn-rhead" },
+      h("b", {}, who), rm.user ? h("span", { class: "muted" }, rm.user) : null,
+      rm.error ? h("span", { class: "kn-pill bad" }, "hiba")
+        : rm.stale ? h("span", { class: "kn-pill bad", title: "A BI Monitor azon a gépen nem fut, vagy nem éri el a közös mappát" }, "nem jelentkezik")
+        : h("span", { class: "kn-pill ok" }, h("span", { class: "kn-dot" }), "él"),
+      h("span", { class: "small muted" }, "utoljára " + fmtDateTime(rm.updated, true)),
+      h("div", { class: "grow" }),
+      h("span", { class: "small muted" }, [rm.knime ? "KNIME " + rm.knime : "", rm.nodepit ? "NodePit " + rm.nodepit : "", rm.app ? "BI Monitor " + rm.app : ""].filter(Boolean).join(" · ")));
+    const box = h("div", { class: "kn-remote" + (rm.stale ? " stale" : "") }, head);
+    if (rm.error) { box.append(h("div", { class: "errbox" }, rm.error)); card.append(box); continue; }
+    if (rm.stale) box.append(h("div", { class: "kn-res bad", style: { margin: "0 0 8px" } },
+      "Ez a gép " + fmtDateTime(rm.updated) + " óta nem írt a közös mappába: a BI Monitor ott nem fut, vagy nem éri el a mappát. Az alábbi állapot ekkori, és az ütemezett futtatások most nem biztos, hogy elindulnak."));
+    const tb = h("tbody");
+    for (const j of rm.jobs) {
+      const st = j.live ? j.live.status : j.retry ? "retry" : j.last ? j.last.status : "";
+      const last = j.last;
+      tb.append(h("tr", { class: j.scheduled && !j.enabled ? "off" : "" },
+        h("td", {}, knPill(st)),
+        h("td", {}, h("div", { class: "kn-name" }, j.name), h("div", { class: "mono small muted kn-ell kn-path", title: j.workflow }, h("bdi", {}, j.workflow))),
+        h("td", { class: "small" }, h("div", {}, j.schedule + (j.scheduled && !j.enabled ? " (szünetel)" : "")), j.next ? h("div", { class: "muted" }, "Következő: " + fmtDateTime(j.next)) : null),
+        h("td", { class: "small" }, j.live ? (j.live.status === "running" ? "Fut, indult: " + fmtDateTime(j.live.started) : "Sorban áll")
+          : j.retry ? h("div", {}, "Újrapróbálja: " + fmtDateTime(j.retry.at), last ? h("div", { class: "kn-msg", title: last.message }, knFirst(last.message)) : null)
+          : last ? h("div", {}, fmtDateTime(last.ended || last.queued), last.durationMs ? h("span", { class: "muted" }, " · " + fmtDur(last.durationMs / 1000)) : null,
+            last.status !== "ok" ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knFirst(last.message)) : null) : h("span", { class: "muted" }, "–"))));
+    }
+    if (rm.jobs.length) box.append(h("table", { class: "table kn-table kn-rtable" },
+      h("colgroup", {}, h("col", { style: { width: "120px" } }), h("col"), h("col", { style: { width: "28%" } }), h("col", { style: { width: "28%" } })),
+      h("thead", {}, h("tr", {}, ["Állapot", "Név / workflow", "Ütemezés", "Utolsó futás"].map(t => h("th", { class: "nosort" }, t)))), tb));
+    else box.append(h("div", { class: "kn-empty" }, "Nincs futtatás ezen a gépen."));
+    if (rm.runs.length) {
+      const list = h("div", { class: "kn-runs" });
+      for (const r of rm.runs) list.append(h("div", { class: "kn-run" },
+        h("span", { class: "t" }, fmtDateTime(r.started || r.queued || r.ended)), knPill(r.status),
+        h("span", { class: "n" }, r.jobName),
+        h("span", { class: "muted small" }, r.trigger + (knTry(r) ? " · " + knTry(r) : "") + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
+        h("span", { class: "m " + knMsgCls(r.status), title: r.message }, r.status === "ok" ? "" : knFirst(r.message)), h("span")));
+      const key = "kn-open-" + rm.file;
+      box.append(h("details", { class: "kn-rruns", open: !!KN[key], ontoggle: e => { KN[key] = e.currentTarget.open; } },
+        h("summary", {}, "Utolsó futások (" + rm.runs.length + ")"), list));
+    }
+    card.append(box);
+  }
+  return card;
 }
 
 async function knSaveConfig(patch) {

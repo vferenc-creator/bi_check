@@ -114,6 +114,10 @@ type Config struct {
 	// Preferences: a KNIME preferences file (File → Export Preferences, .epf)
 	// applied to every run (e.g. database drivers set up in the KNIME window).
 	Preferences string `json:"preferences"`
+	// NoShare: do not publish the state of the runs in the shared folder.
+	NoShare bool `json:"noShare"`
+	// MuteRemote: no notifications about the other computers' runs.
+	MuteRemote bool `json:"muteRemote"`
 }
 
 func (c *Config) normalize() {

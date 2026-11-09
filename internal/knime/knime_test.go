@@ -673,3 +673,36 @@ func TestPreferencesArg(t *testing.T) {
 		t.Fatalf("%s | %s", a, b)
 	}
 }
+
+func TestShareFiles(t *testing.T) {
+	if n := ShareFileName("EF-BI", `ENERGOFISH\d.admin`); n != "EF-BI__d.admin.json" {
+		t.Fatal(n)
+	}
+	if n := ShareFileName("gép 1", ""); n != "g_p_1__ismeretlen.json" {
+		t.Fatal(n)
+	}
+	root := t.TempDir()
+	now := time.Now()
+	mine := Shared{Version: ShareVersion, Host: "KLIENS", Updated: now, IntervalSec: 60}
+	srv := Shared{Version: ShareVersion, Host: "EF-BI", Updated: now.Add(-2 * time.Minute), IntervalSec: 60,
+		Jobs: []SharedJob{{ID: "j1", Name: "Napi"}}, Runs: []SharedRun{ShareRun(Run{ID: "r1", Message: "a\nb\nc\nd\ne"})}}
+	must(t, WriteShared(root, "KLIENS__x.json", mine))
+	must(t, WriteShared(root, "EF-BI__y.json", srv))
+	must(t, os.WriteFile(filepath.Join(root, ShareFolder, "rossz.json"), []byte("{"), 0o644))
+	must(t, os.WriteFile(filepath.Join(root, ShareFolder, ".felkesz.json.tmp"), []byte("{"), 0o644))
+	must(t, WriteShared(root, "UJ__z.json", Shared{Version: ShareVersion + 1, App: "9.9"}))
+	rs, err := ReadShared(root, "kliens__X.json") // our own file is left out (case-insensitive)
+	must(t, err)
+	if len(rs) != 3 || rs[0].File != "EF-BI__y.json" || rs[0].Error != "" || rs[0].Data.Jobs[0].Name != "Napi" ||
+		rs[0].Data.Runs[0].Message != "a\nb\nc" || rs[1].Error == "" || rs[2].Error == "" || !strings.Contains(rs[2].Error, "frissítse") {
+		t.Fatalf("%+v", rs)
+	}
+	if rs[0].Data.Stale(now) || !rs[0].Data.Stale(now.Add(20*time.Minute)) {
+		t.Fatal("stale")
+	}
+	must(t, RemoveShared(root, "EF-BI__y.json"))
+	must(t, RemoveShared(root, "EF-BI__y.json")) // already gone: no error
+	if rs, _ := ReadShared(t.TempDir(), ""); rs == nil || len(rs) != 0 {
+		t.Fatal("no folder yet: empty, no error")
+	}
+}

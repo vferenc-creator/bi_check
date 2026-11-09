@@ -436,6 +436,18 @@ A NodePit Batch telepítése alatt új futás nem indul. Frissítésnél a progr
 - **Előzmények**: időpont, eredmény, időtartam, és a NodePit kilépési kódja magyarul: 0 sikeres · 10 hibás paraméter · 20 a workflow nem tölthető be (rossz útvonal, vagy másik KNIME-ban nyitva) · 30 hiba futtatás közben (egy csomópont hibára futott) · 40 mentési hiba · 50 ismeretlen hiba. A hibás futásnál a `knime.log` utolsó ERROR sorai is látszanak.
 - **Napló** (kattintás az előzményre): a parancs (a jelszó kitakarva), a KNIME kimenete és a futás `knime.log`-jának vége.
 
+### Más gépek futtatásai (közös mappán át)
+
+Közös módban a futtatásokat végző gép (pl. a BI szerver) percenként és minden változáskor kiírja a futtatásai állapotát a közös mappa **saját almappájába**: `<közös mappa>\knime-futtatasok\<gép>__<felhasználó>.json`. A közös mappa többi részéhez (`bicheck.json`, `reports`, `locks`, `adatbazis-terkep`) nem nyúl. A fájlban nincs jelszó, workflow-változó, hitelesítés és napló – csak a futtatások neve, workflow-ja, ütemezése, következő futása és az utolsó 30 futás eredménye (a hibaüzenet első soraival).
+
+A többi gép KNIME futtatás oldalán ez **csak olvasható** kártyán látszik („Más gépek KNIME-futtatásai”): gépenként „él” / „nem jelentkezik” jelzés (utolsó jelentkezés ideje), a futtatások állapota, ütemezése, következő és utolsó futása, és az utolsó futások listája. Ha egy gépnek nincs saját futtatása, ez a kártya legfelül van.
+
+Értesítés (Windows) a többi gépen:
+- ha ott egy futás **végleg** hibás lett (hiba, időtúllépés, kimaradt – újrapróbálás után csak az utolsó), egyszer;
+- ha a gép **10 percnél tovább nem jelentkezik** (a BI Monitor nem fut, vagy nem éri el a mappát), egyszer – és amikor újra jelentkezik.
+
+Kapcsolók a „KNIME és NodePit Batch” kártyán: *Állapot megosztása a közös mappában* (csak akkor ír, ha a gépen van futtatás; kikapcsolva a saját fájlját törli) és *Értesítés a többi gép KNIME-hibáiról*. Egy elérhetetlen közös mappa a programot nem akasztja meg (időkorláttal próbálja).
+
 ### Szerveren
 
 A futtatás akkor működik, amikor a BI Monitor fut (bejelentkezett felhasználóval, a tálcán). Szerveren használjon egy erre szolgáló felhasználót, amely be van jelentkezve, és amelynek joga van a workflow-k mappáihoz, a hálózati megosztásokhoz és az adatbázisokhoz. (Bejelentkezés nélküli, Windows-szolgáltatásként futó mód egy későbbi bővítés.) Windows Server 2016 / 2019 / 2022 / 2025 asztali felülettel (nem Server Core) és WebView2 Runtime-mal.
@@ -496,7 +508,7 @@ A bal oldali menü **Beállítások** oldalán. A módosítások a jobb felső *
 | `%LOCALAPPDATA%\EnergofishMonitor\knime\` | KNIME futtatás: a futtatások és beállításuk (`jobs.json`), az előzmények (`runs.json`), a futások naplói (`naplok\`), a hitelesítések jelszavai (`jelszavak\`, DPAPI), a letöltött NodePit zip (`letoltesek\`) és a futások ideiglenes munkamappái (`munka\`, futás után törlődnek) |
 | `%APPDATA%\EnergofishMonitor\sql-jelszo.bin` | az SQL Server-jelszó (csak SQL-bejelentkezésnél), Windows DPAPI-val titkosítva |
 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\EnergofishBIMonitor` | automatikus indítás |
-| *közös mappa* (közös módban) | a riportdefiníciók és zárak – lásd [Közös mód](#közös-mód-csapat) |
+| *közös mappa* (közös módban) | a riportdefiníciók és zárak – lásd [Közös mód](#közös-mód-csapat); `knime-futtatasok\`: a KNIME-futtatások állapota gépenként (lásd [KNIME futtatás](#knime-futtatás)) |
 
 A beállítások a roaming `APPDATA` alatt vannak, mert kicsik és a felhasználóhoz tartoznak. Az előzmények és a gyorsítótár a gépenkénti `LOCALAPPDATA` alatt vannak, mert SQLite adatbázist nem szabad vándorló profilban tartani.
 
