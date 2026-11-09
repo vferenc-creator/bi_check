@@ -25,12 +25,17 @@
 .kn-name { font-weight: 600; }
 .kn-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kn-msg { color: var(--missing); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.kn-msg.quiet, .kn-run .m.quiet { color: var(--muted); }
+.kn-msg.warn, .kn-run .m.warn { color: var(--late); }
+/* long paths: keep the end (the workflow's own folder) visible */
+.kn-path { direction: rtl; text-align: left; }
+.kn-url { margin: -4px 0 4px 150px; }
 .kn-btns { text-align: right; white-space: nowrap; }
 .kn-link { height: auto; padding: 2px 0; margin-top: 2px; color: var(--accent-dark); text-decoration: underline; }
 .kn-btns .btn { margin-left: 4px; }
 .kn-empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
 .kn-runs { display: grid; }
-.kn-run { display: grid; grid-template-columns: 110px 110px minmax(120px, 220px) 150px 1fr 18px; gap: 10px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.kn-run { display: grid; grid-template-columns: 110px 110px minmax(120px, 220px) minmax(150px, 230px) 1fr 18px; gap: 10px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .kn-run:last-child { border-bottom: 0; }
 .kn-run.click { cursor: pointer; }
 .kn-run.click:hover { background: var(--hover); }
@@ -54,6 +59,7 @@
 .kn-sh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
 @media (max-width: 900px) {
   .kn-row { grid-template-columns: 1fr; }
+  .kn-url { margin-left: 0; }
   .kn-act { justify-content: flex-start; }
   .kn-ed { grid-template-columns: 1fr; }
   .kn-run { grid-template-columns: 1fr auto; }

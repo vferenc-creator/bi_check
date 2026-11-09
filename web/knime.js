@@ -23,7 +23,14 @@ function knPill(status) {
   return h("span", { class: "kn-pill " + cls }, status === "running" ? h("span", { class: "kn-dot" }) : null, txt);
 }
 
-bridge.on("knime", () => { if (S.view === "knime") knLoad(); });
+bridge.on("knime", () => { if (S.view === "knime" && !$(".menu")) knLoad(); });
+
+// Esc closes the topmost KNIME window
+function knEsc(close) {
+  const onKey = e => { if (e.key === "Escape" && !$(".menu")) { e.preventDefault(); e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  return () => document.removeEventListener("keydown", onKey, true);
+}
 
 views.knime = main => {
   main.append(h("div", { id: "knRoot" }, h("div", { class: "small muted" }, "Betöltés…")));
@@ -31,7 +38,7 @@ views.knime = main => {
   clearInterval(KN.poll);
   KN.poll = setInterval(() => {
     if (S.view !== "knime" || !$("#knRoot")) { clearInterval(KN.poll); return; }
-    if (document.visibilityState === "visible" && !$(".overlay")) knLoad();
+    if (document.visibilityState === "visible" && !$(".overlay") && !$(".menu")) knLoad();
   }, 5000);
 };
 
@@ -84,7 +91,7 @@ function knSetupCard(v) {
         h("button", { class: "btn sm primary", disabled: v.installing || !v.zipUrl, title: v.zipUrl || "A KNIME verziója nem ismert", onclick: () => knInstall({ download: true }) },
           icon("download"), "Letöltés és telepítés" + (inst.version ? " (" + inst.version.split(".").slice(0, 2).join(".") + ")" : "")),
         h("button", { class: "btn sm", disabled: v.installing, onclick: knInstallZip }, icon("upload"), "Zip a gépről…"))));
-    if (v.zipUrl) body.append(h("div", { class: "small muted", style: { margin: "-4px 0 4px 150px" } }, "Letöltési cím: ", h("span", { class: "mono selectable" }, v.zipUrl)));
+    if (v.zipUrl) body.append(h("div", { class: "small muted kn-url" }, "Letöltési cím: ", h("span", { class: "mono selectable" }, v.zipUrl)));
   }
   if (KN.result) {
     const r = KN.result;
@@ -167,26 +174,27 @@ function knJobsCard(v) {
     const st = live ? live.status : retry ? "retry" : last ? last.status : "";
     tb.append(h("tr", { class: j.scheduled && !j.enabled ? "off" : "" },
       h("td", {}, knPill(st)),
-      h("td", {}, h("div", { class: "kn-name" }, j.name), h("div", { class: "mono small muted kn-ell", title: j.workflow }, j.workflow)),
+      h("td", {}, h("div", { class: "kn-name" }, j.name), h("div", { class: "mono small muted kn-ell kn-path", title: j.workflow }, h("bdi", {}, j.workflow))),
       h("td", { class: "small" }, h("div", {}, jv.scheduleText), jv.next ? h("div", { class: "muted" }, "Következő: " + fmtDateTime(jv.next)) : null),
       h("td", { class: "small" }, live ? h("div", {}, live.status === "running" ? "Fut, indult: " + fmtDateTime(live.started) : "Sorban áll",
           knTry(live) ? h("span", { class: "muted" }, " · " + knTry(live)) : null)
         : retry ? h("div", {}, "Hiba után újrapróbálja: " + fmtDateTime(retry.at), h("span", { class: "muted" }, " · " + retry.attempt + "/" + retry.of + ". próbálkozás"),
-          last ? h("div", { class: "kn-msg", title: last.message }, knFirst(last.message)) : null,
+          last ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knFirst(last.message)) : null,
           h("button", { class: "btn sm ghost kn-link", onclick: () => knCancelRetry(j.id) }, "Újrapróbálás törlése"))
         : last ? h("div", {}, fmtDateTime(last.ended || last.queued), last.durationMs ? h("span", { class: "muted" }, " · " + fmtDur(last.durationMs / 1000)) : null,
-          last.status !== "ok" ? h("div", { class: "kn-msg", title: last.message }, knFirst(last.message)) : null) : h("span", { class: "muted" }, "–")),
+          last.status !== "ok" ? h("div", { class: "kn-msg " + knMsgCls(last.status), title: last.message }, knFirst(last.message)) : null) : h("span", { class: "muted" }, "–")),
       h("td", { class: "kn-btns" },
         live ? h("button", { class: "btn sm", onclick: () => knCancel(live.id) }, icon("stopSq"), "Leállítás")
           : h("button", { class: "btn sm primary", disabled: !knReady(v), onclick: () => knRunNow(j.id) }, icon("play"), "Futtatás most"),
         h("button", { class: "btn sm icon ghost", title: "Szerkesztés", onclick: () => knEditor(j) }, icon("edit")),
-        h("button", { class: "btn sm icon ghost", title: "Továbbiak", onclick: e => showMenu(e.currentTarget, [
+        // stopPropagation: the page-wide click handler closes menus
+        h("button", { class: "btn sm icon ghost", title: "Továbbiak", onclick: e => { e.stopPropagation(); showMenu(e.currentTarget, [
           last && last.log ? { label: "Utolsó futás naplója", icon: "logTxt", run: () => knShowLog(last) } : false,
           { label: "Duplikálás", icon: "copy", run: () => knEditor(Object.assign(JSON.parse(JSON.stringify(j)), { id: "", name: j.name + " (másolat)", credentials: (j.credentials || []).map(c => Object.assign({}, c, { hasPassword: false })) })) },
           j.scheduled ? { label: j.enabled ? "Ütemezés szüneteltetése" : "Ütemezés folytatása", icon: "power", run: () => knToggle(j) } : false,
           null,
           { label: "Törlés", icon: "trash", danger: true, run: () => knDelete(j) },
-        ].filter(x => x !== false)) }, icon("dots")))));
+        ].filter(x => x !== false)); } }, icon("dots")))));
   }
   card.append(h("table", { class: "table kn-table" },
     h("colgroup", {}, h("col", { style: { width: "120px" } }), h("col"), h("col", { style: { width: "24%" } }), h("col", { style: { width: "22%" } }), h("col", { style: { width: "232px" } })),
@@ -194,6 +202,8 @@ function knJobsCard(v) {
   return card;
 }
 function knFirst(s) { return String(s || "").split("\n")[0]; }
+// red only for real failures; a stop by hand or a skip is not an error
+function knMsgCls(status) { return status === "canceled" || status === "skipped" ? "quiet" : status === "missed" ? "warn" : ""; }
 
 async function knRunNow(id) {
   try { await api("knimeRunNow", { id }); toast("Elindítva."); knLoad(); } catch (e) { fail(e); }
@@ -224,7 +234,7 @@ function knRunsCard(v) {
       knPill(r.status),
       h("span", { class: "n" }, r.jobName),
       h("span", { class: "muted small" }, r.trigger + (knTry(r) ? " · " + knTry(r) : "") + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
-      h("span", { class: "m", title: r.message }, r.status === "ok" ? "" : knFirst(r.message)),
+      h("span", { class: "m " + knMsgCls(r.status), title: r.message }, r.status === "ok" ? "" : knFirst(r.message)),
       r.log ? icon("logTxt") : h("span")));
   }
   card.append(list);
@@ -233,7 +243,8 @@ function knRunsCard(v) {
 
 async function knShowLog(r) {
   const pre = h("pre", { class: "kn-pre kn-log" }, "Betöltés…");
-  const close = () => ov.remove();
+  let unEsc = () => {};
+  const close = () => { unEsc(); ov.remove(); };
   const ov = h("div", { class: "overlay", onclick: e => { if (e.target === ov) close(); } },
     h("div", { class: "modal", style: { width: "1000px" } },
       h("div", { class: "m-head" }, icon("logTxt"), h("h2", { class: "grow" }, r.jobName + " – " + fmtDateTime(r.started || r.queued)), knPill(r.status),
@@ -244,6 +255,7 @@ async function knShowLog(r) {
         h("div", { class: "grow" }),
         h("button", { class: "btn primary", onclick: close }, "Bezárás"))));
   document.body.append(ov);
+  unEsc = knEsc(close);
   try { pre.textContent = await api("knimeLog", { id: r.id }); pre.scrollTop = pre.scrollHeight; } catch (e) { pre.textContent = e.message || String(e); }
 }
 
@@ -401,7 +413,8 @@ function knEditor(job) {
   }
   drawSched();
 
-  const close = () => ov.remove();
+  let unEsc = () => {};
+  const close = () => { unEsc(); ov.remove(); };
   const save = async () => {
     clear(err);
     j.retryWaitMin = parseInt(waitIn.value, 10) || 0;
@@ -416,7 +429,8 @@ function knEditor(job) {
       knLoad();
     } catch (e) { err.append(h("div", { class: "errbox" }, e.message || String(e))); }
   };
-  const ov = h("div", { class: "overlay", onclick: e => { if (e.target === ov) close(); } },
+  // no close on a click beside the dialog: the typed data would be lost
+  const ov = h("div", { class: "overlay" },
     h("div", { class: "modal kn-modal" },
       h("div", { class: "m-head" }, icon("knime"), h("h2", { class: "grow" }, isNew ? "Új KNIME futtatás" : "Futtatás szerkesztése"), h("button", { class: "btn sm icon ghost", onclick: close }, icon("close"))),
       h("div", { class: "m-body kn-ed" },
@@ -458,5 +472,6 @@ function knEditor(job) {
         h("button", { class: "btn", onclick: close }, "Mégse"),
         h("button", { class: "btn primary", onclick: save }, icon("check"), isNew ? "Felvétel" : "Mentés"))));
   document.body.append(ov);
+  unEsc = knEsc(close);
   nameIn.focus();
 }
