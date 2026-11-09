@@ -438,7 +438,26 @@ A NodePit Batch telepítése alatt új futás nem indul. Frissítésnél a progr
 
 ### Szerveren
 
-A futtatás akkor működik, amikor a BI Monitor fut (bejelentkezett felhasználóval, a tálcán). Szerveren használjon egy erre szolgáló felhasználót, amely be van jelentkezve, és amelynek joga van a workflow-k mappáihoz, a hálózati megosztásokhoz és az adatbázisokhoz. (Bejelentkezés nélküli, Windows-szolgáltatásként futó mód egy későbbi bővítés.)
+A futtatás akkor működik, amikor a BI Monitor fut (bejelentkezett felhasználóval, a tálcán). Szerveren használjon egy erre szolgáló felhasználót, amely be van jelentkezve, és amelynek joga van a workflow-k mappáihoz, a hálózati megosztásokhoz és az adatbázisokhoz. (Bejelentkezés nélküli, Windows-szolgáltatásként futó mód egy későbbi bővítés.) Windows Server 2016 / 2019 / 2022 / 2025 asztali felülettel (nem Server Core) és WebView2 Runtime-mal.
+
+Hogy hetekig felügyelet nélkül is fusson:
+
+1. **Indítás a Windows-zal** (Beállítások) – bejelentkezéskor magától indul.
+2. **Távoli asztalról ne jelentkezzen ki**, csak bontsa a kapcsolatot (az ablak X-ével): a munkamenet és vele a BI Monitor fut tovább.
+3. **Őr-feladat**: ha a program bármiért leállna, negyedórán belül újraindul (ha fut, nem történik semmi). Egyszer, a szerveren az adott felhasználóval (az útvonalat igazítsa):
+
+   ```
+   schtasks /Create /TN "BI Monitor ör" /SC MINUTE /MO 15 /IT /TR "\"C:\BI\BIMonitor.exe\" --minimized"
+   ```
+
+   (`/IT`: csak a bejelentkezett felhasználó munkamenetében fut, ott, ahol a tálca is.)
+4. **Lekapcsolt munkamenetek időkorlátja**: egyes csoportházirendek a lekapcsolt távoli asztali munkamenetet néhány óra után kijelentkeztetik – ez a BI Monitort is leállítja. Ellenőrzés PowerShellben (ha van érték és nem 0, az ezredmásodpercben a korlát – kérje a rendszergazdát, hogy ennél a felhasználónál kapcsolja ki):
+
+   ```
+   Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -ErrorAction SilentlyContinue | Select-Object MaxDisconnectionTime, MaxIdleTime
+   ```
+
+5. **Újraindítás (pl. Windows Update) után** valakinek be kell jelentkeznie (vagy automatikus bejelentkezés kell, pl. a Microsoft Sysinternals Autologon eszközzel). Az addig esedékes futások „kimaradt” jelzést kapnak az előzményekben – így látszik, ha valami elmaradt.
 
 ## Import/export
 
@@ -489,7 +508,7 @@ Ha a `settings.json` megsérül, a program nem írja felül: `settings.json.hiba
 
 ```
 BIMonitor.exe                 indítás (ha már fut, előhozza a futó példány ablakát)
-BIMonitor.exe --minimized     indítás csak a tálcán (ezt használja az automatikus indítás)
+BIMonitor.exe --minimized     indítás csak a tálcán (ezt használja az automatikus indítás); ha már fut, nem csinál semmit – így „őrként” ütemezhető
 BIMonitor.exe --data-dir X    a %APPDATA%/%LOCALAPPDATA% helyett az X mappát használja (teszteléshez)
 BIMonitor.exe --debug         a felületen elérhetők a fejlesztői eszközök (F12)
 BIMonitor.exe --selftest F    automata füstteszt: megnyitja a felületet, „ok”-t ír F-be és kilép (CI)

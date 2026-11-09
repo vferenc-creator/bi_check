@@ -5,7 +5,9 @@
 // Command line:
 //
 //	BIMonitor.exe               start (or bring the running instance to front)
-//	BIMonitor.exe --minimized   start in the tray only (used by autostart)
+//	BIMonitor.exe --minimized   start in the tray only (used by autostart; if it
+//	                            already runs, it does nothing – usable as a
+//	                            Task Scheduler watchdog)
 //	BIMonitor.exe --debug       enable WebView2 dev tools
 //	BIMonitor.exe --data-dir X  use X instead of %APPDATA% / %LOCALAPPDATA%
 //	BIMonitor.exe --selftest F  open the UI, write "ok" to F once it talks to Go, exit
@@ -51,6 +53,11 @@ func main() {
 	}
 
 	ok, mutex := winapi.AcquireSingleInstance("EnergofishBIMonitor")
+	if !ok && *minimized {
+		// Already running and started in the tray (autostart, or a Task
+		// Scheduler "keep it running" task every few minutes): nothing to do.
+		return
+	}
 	if !ok {
 		// Already running: ask that instance to show its window.
 		if h := winapi.FindWindow(desktop.HostClass); h != 0 {
