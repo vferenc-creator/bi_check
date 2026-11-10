@@ -1,7 +1,6 @@
 package knime
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -158,9 +157,12 @@ type active struct {
 	run       Run
 	cancel    context.CancelFunc
 	canceled  bool
-	workspace string // own workspace in use ("" = temporary)
-	data      string // the run's KNIME workspace (its knime.log: live log)
-	log       string // the run's log file name
+	workspace string   // own workspace in use ("" = temporary)
+	data      string   // the run's KNIME workspace (its knime.log: live log)
+	log       string   // the run's log file name
+	logFrom   int64    // size of knime.log at the start (an own workspace keeps older runs in it)
+	masks     []string // the run's passwords (hidden in the live log)
+	shutdown  bool     // stopped by the program's stop, not by the user
 }
 
 // workspaceKey identifies a job's own workspace ("" = temporary).
@@ -291,7 +293,7 @@ func (r *Runner) enqueue(j Job, trigger string, due time.Time, attempt int) (Run
 		r.mu.Unlock()
 	}
 	run := Run{ID: NewID(), JobID: j.ID, JobName: j.Name, Trigger: trigger, Due: due, Queued: r.now(), Status: StatusQueued,
-		Attempt: attempt, Attempts: j.RetryCount + 1}
+		Attempt: attempt, Attempts: max(j.RetryCount+1, attempt)}
 	if err := r.Store.PutRun(run); err != nil {
 		unreserve()
 		return run, fmt.Errorf("a futás nem rögzíthető: %w", err)
@@ -362,27 +364,35 @@ func (r *Runner) CancelAll() {
 	q := r.queue
 	r.queue = nil
 	for _, a := range r.active {
-		a.canceled = true
+		a.canceled, a.shutdown = true, true
 		a.cancel()
 	}
 	r.mu.Unlock()
 	for _, p := range q {
 		run := p.run
-		run.Status, run.Message, run.Ended = StatusCanceled, "A program leállt, mielőtt elindult.", r.now()
+		run.Status, run.Message, run.Ended = StatusCanceled, MsgStoppedQueued, r.now()
+		r.Store.ResumeLater(&run, false, r.now())
 		_ = r.Store.PutRun(run)
 	}
 }
 
-// LiveLog returns the log file name and the KNIME workspace of a running
-// run (its knime.log grows while the workflow runs).
-func (r *Runner) LiveLog(runID string) (logName, data string, ok bool) {
+// LiveLog returns what a running run has written so far and the new part
+// of its knime.log, passwords hidden; ok is false when it is not running.
+func (r *Runner) LiveLog(runID string) (string, bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	a := r.active[runID]
 	if a == nil || a.data == "" {
-		return "", "", false
+		r.mu.Unlock()
+		return "", false
 	}
-	return a.log, a.data, true
+	name, data, from, masks := a.log, a.data, a.logFrom, a.masks
+	r.mu.Unlock()
+	text := readFrom(r.Store.LogPath(name), 0, 400<<10, 0) +
+		"\n===== knime.log (élő – a futás még tart) =====\n" + readFrom(knimeLogPath(data), from, 1<<20, 300)
+	for _, m := range masks {
+		text = strings.ReplaceAll(text, m, "••••")
+	}
+	return text, true
 }
 
 // Live returns the queued and running runs.
@@ -455,7 +465,16 @@ func (r *Runner) dispatch() {
 			defer r.running.Done()
 			defer cancel()
 			run := r.execute(ctx, a, p.job)
-			r.planRetry(&run, p.job)
+			r.mu.Lock()
+			shutdown := a.shutdown
+			r.mu.Unlock()
+			if shutdown && run.Status == StatusCanceled {
+				// the program stops: a scheduled run goes on at the next start
+				run.Message = MsgStoppedRunning
+				r.Store.ResumeLater(&run, true, r.now())
+			} else {
+				r.planRetry(&run, p.job)
+			}
 			r.mu.Lock()
 			delete(r.active, run.ID)
 			r.mu.Unlock()
@@ -562,8 +581,20 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	cfg := r.Store.Config()
 	args := BuildArgs(j, data, wf, pw, cfg.ConsoleLog, strings.TrimSpace(cfg.Preferences))
 	run.Log = run.ID + ".log"
+	// an own workspace keeps the knime.log of earlier runs: only what this
+	// run adds is read
+	var logFrom int64
+	if st, err := os.Stat(knimeLogPath(data)); err == nil {
+		logFrom = st.Size()
+	}
+	var masks []string
+	for _, p := range pw {
+		if p != "" {
+			masks = append(masks, p)
+		}
+	}
 	r.mu.Lock()
-	a.data, a.log = data, run.Log
+	a.data, a.log, a.logFrom, a.masks = data, run.Log, logFrom, masks
 	r.mu.Unlock()
 	lf, err := os.Create(r.Store.LogPath(run.Log))
 	if err != nil {
@@ -572,12 +603,7 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	defer lf.Close()
 	fmt.Fprintf(lf, "BI Monitor – KNIME futtatás: %s\nIndítva: %s (%s)\nParancs: %s %s\n\n",
 		j.Name, run.Started.Format("2006-01-02 15:04:05"), run.Trigger, exe, mask(strings.Join(quoteArgs(args), " "), pw))
-	out := &tailWriter{w: lf, max: 64 << 10}
-	for _, p := range pw {
-		if p != "" {
-			out.masks = append(out.masks, p)
-		}
-	}
+	out := &tailWriter{w: lf, max: 64 << 10, masks: masks}
 	command := r.Command
 	if command == nil {
 		command = defaultCommand
@@ -600,7 +626,7 @@ func (r *Runner) execute(ctx context.Context, a *active, j Job) Run {
 	}
 	out.Flush()
 	// through the masking writer: knime.log may repeat the arguments
-	appendKnimeLog(out, filepath.Join(data, ".metadata", "knime", "knime.log"))
+	appendKnimeLog(out, knimeLogPath(data), logFrom)
 	out.Flush()
 	text := out.String()
 	r.mu.Lock()
@@ -710,22 +736,57 @@ func errorLines(text string, n int) []string {
 }
 
 // appendKnimeLog adds the end of the run's knime.log to the log file.
-func appendKnimeLog(w io.Writer, path string) {
-	f, err := os.Open(path)
-	if err != nil {
+func appendKnimeLog(w io.Writer, path string, from int64) {
+	text := readFrom(path, from, 4<<20, 400)
+	if text == "" {
 		return
 	}
+	fmt.Fprintf(w, "\n===== knime.log (a futás sorai, legfeljebb az utolsó 400) =====\n%s\n", text)
+}
+
+func knimeLogPath(data string) string {
+	return filepath.Join(data, ".metadata", "knime", "knime.log")
+}
+
+// readFrom reads a file from the offset from (from the start when the file
+// got shorter: KNIME rotated it), at most the last max bytes and, if
+// lines > 0, the last lines lines.
+func readFrom(path string, from, max int64, lines int) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
 	defer f.Close()
-	var ring []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64<<10), 1<<20)
-	for sc.Scan() {
-		ring = append(ring, sc.Text())
-		if len(ring) > 400 {
-			ring = ring[len(ring)-400:]
+	st, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	size := st.Size()
+	if from > size {
+		from = 0
+	}
+	cut := false
+	if size-from > max {
+		from, cut = size-max, true
+	}
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return ""
+	}
+	b, _ := io.ReadAll(io.LimitReader(f, max))
+	text := strings.TrimRight(string(b), "\r\n")
+	if cut { // the first line is probably partial
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			text = text[i+1:]
 		}
 	}
-	fmt.Fprintf(w, "\n===== knime.log (utolsó %d sor) =====\n%s\n", len(ring), strings.Join(ring, "\n"))
+	if lines > 0 {
+		ls := strings.Split(text, "\n")
+		if len(ls) > lines {
+			ls = ls[len(ls)-lines:]
+		}
+		text = strings.Join(ls, "\n")
+	}
+	return text
 }
 
 func quoteArgs(a []string) []string {

@@ -181,7 +181,7 @@ function knRemoteCard(v) {
     if (rm.runs.length) {
       const list = h("div", { class: "kn-runs" });
       for (const r of rm.runs) list.append(h("div", { class: "kn-run" },
-        h("span", { class: "t" }, fmtDateTime(r.started || r.queued || r.ended)), knPill(r.status),
+        h("span", { class: "t" }, fmtDateTime(knT(r.started) || knT(r.queued) || r.ended)), knPill(r.status),
         h("span", { class: "n" }, r.jobName),
         h("span", { class: "muted small" }, r.trigger + (knTry(r) ? " · " + knTry(r) : "") + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
         h("span", { class: "m " + knMsgCls(r.status), title: r.message }, r.status === "ok" ? "" : knShort(r)), h("span")));
@@ -335,7 +335,7 @@ function knRunsCard(v) {
   const list = h("div", { class: "kn-runs" });
   for (const r of runs) {
     list.append(h("div", { class: "kn-run" + (r.log ? " click" : ""), onclick: () => { if (r.log) knShowLog(r); }, title: r.log ? "Napló megnyitása" : "" },
-      h("span", { class: "t" }, fmtDateTime(r.started || r.queued || r.ended)),
+      h("span", { class: "t" }, fmtDateTime(knT(r.started) || knT(r.queued) || r.ended)),
       knPill(r.status),
       h("span", { class: "n" }, r.jobName),
       h("span", { class: "muted small" }, r.trigger + (knTry(r) ? " · " + knTry(r) : "") + (r.durationMs ? " · " + fmtDur(r.durationMs / 1000) : "")),
@@ -353,7 +353,7 @@ async function knShowLog(r) {
   const close = () => { clearTimeout(timer); unEsc(); ov.remove(); };
   const ov = h("div", { class: "overlay", onclick: e => { if (e.target === ov) close(); } },
     h("div", { class: "modal", style: { width: "1000px" } },
-      h("div", { class: "m-head" }, icon("logTxt"), h("h2", { class: "grow" }, r.jobName + " – " + fmtDateTime(r.started || r.queued)), liveTag, knPill(r.status),
+      h("div", { class: "m-head" }, icon("logTxt"), h("h2", { class: "grow" }, r.jobName + " – " + fmtDateTime(knT(r.started) || knT(r.queued))), liveTag, knPill(r.status),
         h("button", { class: "btn sm icon ghost", onclick: close }, icon("close"))),
       h("div", { class: "m-body" }, r.message ? h("div", { class: "kn-res " + (r.status === "ok" ? "ok" : "bad"), style: { marginTop: 0, whiteSpace: "pre-line" } }, r.message) : null,
         r.nodesTotal ? h("div", { class: "small muted", style: { margin: "6px 0 0" } }, "Lefutott csomópontok: " + r.nodesExecuted + " / " + r.nodesTotal) : null, pre),
@@ -374,10 +374,17 @@ async function knShowLog(r) {
       liveTag.hidden = !lv.running;
       if (lv.running) timer = setTimeout(load, 2000);
       else if (r.status === "running" || r.status === "queued") { knLoad(); } // finished meanwhile
-    } catch (e) { pre.textContent = e.message || String(e); }
+    } catch (e) {
+      if (!document.body.contains(ov)) return;
+      if (!liveTag.hidden) { timer = setTimeout(load, 4000); return; } // a passing error: keep the text, try again
+      pre.textContent = e.message || String(e);
+    }
   };
   load();
 }
+
+// knT: a time sent by Go, null when zero ("0001-01-01…", so a fallback works)
+function knT(s) { return parseT(s) ? s : null; }
 
 // ---- editor -------------------------------------------------------------------
 const KN_TYPES = [["daily", "Naponta"], ["workdays", "Munkanapokon"], ["weekly", "Hetente"], ["hourly", "Óránként"], ["monthly", "Havonta"], ["cron", "Cron"]];

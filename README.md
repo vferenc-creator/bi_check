@@ -423,7 +423,7 @@ A NodePit Batch telepítése alatt új futás nem indul. Frissítésnél a progr
 | Futtatás másolatból | akkor is fut, ha a workflow nyitva van a KNIME-ban (egy ideiglenes másolatot futtat) |
 | Mentés futás után | alapból ki: a workflow nem változik (a „Futtatás másolatból” mellett nem választható, mert a másolat futás után törlődik) |
 | Időkorlát | ennyi perc után leállítja (alapból 120; 0 = nincs) |
-| Újrapróbálás hibánál | hiba vagy időtúllépés után ennyiszer próbálja újra (0–5, új futtatásnál alapból 2×), ennyi perc várakozással (alapból 5). A 10-es kódot (hibás paraméter) és a kézi leállítást nem próbálja újra. Az újrapróbálás a program újraindítását is túléli (12 óránál régebbit „elmaradt”-nak jelöl); a „Futtatás most” helyettesíti, a táblázatban törölhető |
+| Újrapróbálás hibánál | hiba vagy időtúllépés után ennyiszer próbálja újra (0–5, új futtatásnál alapból 2×), ennyi perc várakozással (alapból 5). A 10-es kódot (hibás paraméter) és a kézi leállítást nem próbálja újra. Az újrapróbálás a program újraindítását is túléli (12 óránál régebbit „elmaradt”-nak jelöl); a „Futtatás most” helyettesíti, a táblázatban törölhető. Ha egy **ütemezett** futást a program leállása szakít meg (kilépés, összeomlás, a gép újraindítása), a következő induláskor újra elindul – egyszer akkor is, ha nincs újrapróbálás beállítva, de legfeljebb ennyiszer, végtelen ciklus nincs |
 | KNIME munkaterület (haladó) | üresen minden futás új, ideiglenes munkaterületet kap (ajánlott). Csak ha a workflow `knime://LOCAL/` útvonalat vagy a munkaterület beállításait használja: az ugyanilyen munkaterületű futások egymás után futnak, és a munkaterület közben nem lehet nyitva a KNIME ablakban |
 | Értesítés hibánál | Windows-értesítés, ha a futás hibás, időtúllépés vagy kimaradt – újrapróbálásnál csak az utolsó sikertelen próbálkozás után |
 
@@ -446,9 +446,9 @@ A többi gép KNIME futtatás oldalán ez **csak olvasható** kártyán látszik
 
 Értesítés (Windows) a többi gépen:
 - ha ott egy futás **végleg** hibás lett (hiba, időtúllépés, kimaradt – újrapróbálás után csak az utolsó), egyszer;
-- ha a gép **10 percnél tovább nem jelentkezik** (a BI Monitor nem fut, vagy nem éri el a mappát), egyszer – és amikor újra jelentkezik.
+- ha a gép **10 percnél tovább nem jelentkezik** (a BI Monitor nem fut, vagy nem éri el a mappát), egyszer – és amikor újra jelentkezik. Ezt a saját óra szerint méri (mikor változott utoljára a fájl), így a gépek órájának eltérése nem okoz téves jelzést; egy régóta hátrahagyott fájlról nem jön értesítés minden indításkor.
 
-Kapcsolók a „KNIME és NodePit Batch” kártyán: *Állapot megosztása a közös mappában* (csak akkor ír, ha a gépen van futtatás; kikapcsolva a saját fájlját törli) és *Értesítés a többi gép KNIME-hibáiról*. Egy elérhetetlen közös mappa a programot nem akasztja meg (időkorláttal próbálja).
+Kapcsolók a „KNIME és NodePit Batch” kártyán: *Állapot megosztása a közös mappában* (csak akkor ír, ha a gépen van futtatás; kikapcsolva – vagy a közös mód kikapcsolásakor, a közös mappa cseréjekor – a saját fájlját törli) és *Értesítés a többi gép KNIME-hibáiról*. Egy elérhetetlen közös mappa a programot nem akasztja meg (időkorláttal próbálja, és amíg az előző művelet nem tért vissza, nem indít újat); hiányzó közös mappát nem hoz létre.
 
 ### Szerveren
 

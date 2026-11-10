@@ -130,8 +130,15 @@ func (s Shared) Stale(now time.Time) bool {
 // WriteShared writes the state of this computer (atomically: a reader
 // never sees half a file).
 func WriteShared(root, name string, s Shared) error {
+	// the shared folder itself is never created: if it is missing (renamed,
+	// not reachable), nothing is written
+	if st, err := os.Stat(root); err != nil {
+		return err
+	} else if !st.IsDir() {
+		return fmt.Errorf("nem mappa: %s", root)
+	}
 	dir := filepath.Join(root, ShareFolder)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
 	b, err := json.MarshalIndent(s, "", " ")
@@ -187,18 +194,35 @@ func ReadShared(root, exclude string) ([]Remote, error) {
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(n), ".json") || strings.HasPrefix(n, ".") || strings.EqualFold(n, exclude) {
 			continue
 		}
-		r := Remote{File: n}
-		b, err := os.ReadFile(filepath.Join(dir, n))
-		switch {
-		case err != nil:
-			r.Error = "nem olvasható: " + err.Error()
-		case json.Unmarshal(b, &r.Data) != nil:
-			r.Error = "sérült fájl"
-		case r.Data.Version > ShareVersion:
-			r.Error = fmt.Sprintf("újabb BI Monitor írta (%s) – frissítse ezt a programot", r.Data.App)
+		var r Remote
+		for try := 0; try < 2; try++ { // being replaced right now (Windows): once more
+			if try > 0 {
+				time.Sleep(200 * time.Millisecond)
+			}
+			r = Remote{File: n}
+			b, err := os.ReadFile(filepath.Join(dir, n))
+			switch {
+			case err != nil:
+				r.Error = "nem olvasható: " + err.Error()
+				continue
+			case json.Unmarshal(b, &r.Data) != nil:
+				r.Data, r.Error = Shared{}, "sérült fájl"
+				continue
+			case r.Data.Version > ShareVersion:
+				r.Error = fmt.Sprintf("újabb BI Monitor írta (%s) – frissítse ezt a programot", r.Data.App)
+			}
+			break
+		}
+		if errors.Is(statErr(filepath.Join(dir, n)), os.ErrNotExist) {
+			continue // removed meanwhile
 		}
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].File) < strings.ToLower(out[j].File) })
 	return out, nil
+}
+
+func statErr(p string) error {
+	_, err := os.Stat(p)
+	return err
 }
