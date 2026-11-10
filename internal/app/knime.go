@@ -424,11 +424,8 @@ func (a *App) registerKnimeAPI() {
 		if err != nil {
 			return knimeLogView{}, err
 		}
-		if name, data, live := r.LiveLog(p.ID); live {
-			run, _ := st.Run(p.ID)
-			b, _ := os.ReadFile(st.LogPath(name))
-			text := string(b) + "\n===== knime.log (élő – a futás még tart) =====\n" + tailFile(filepath.Join(data, ".metadata", "knime", "knime.log"), 300)
-			return knimeLogView{Text: a.knimeMask(run.JobID, text), Running: true}, nil
+		if text, live := r.LiveLog(p.ID); live {
+			return knimeLogView{Text: text, Running: true}, nil
 		}
 		run, ok := st.Run(p.ID)
 		if !ok || run.Log == "" {
@@ -571,44 +568,6 @@ func (a *App) knimeInstall(p knimeInstallParam) (knimeInstallResult, error) {
 type knimeLogView struct {
 	Text    string `json:"text"`
 	Running bool   `json:"running"` // live: the window refreshes it
-}
-
-// knimeMask hides the job's stored passwords in a live log (the finished
-// log is masked by the runner already).
-func (a *App) knimeMask(jobID, text string) string {
-	st, _, err := a.knimeInit()
-	if err != nil {
-		return text
-	}
-	j, ok := st.Job(jobID)
-	if !ok {
-		return text
-	}
-	for _, c := range j.Credentials {
-		if !c.HasPassword {
-			continue
-		}
-		if pw, err := secret.Load(st.SecretPath(jobID, c.Name)); err == nil && pw != "" {
-			text = strings.ReplaceAll(text, pw, "••••")
-		}
-	}
-	return text
-}
-
-// tailFile returns the last n lines of a file ("" if it does not exist yet).
-func tailFile(path string, n int) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	if len(b) > 1<<20 {
-		b = b[len(b)-1<<20:]
-	}
-	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // knimeDurations: the durations of the last 20 successful runs (oldest

@@ -199,10 +199,19 @@ func OpenStore(dir string) (*Store, error) {
 	// runs that were going when the program stopped
 	for i := range s.run {
 		if r := &s.run[i]; r.Status == StatusRunning || r.Status == StatusQueued {
-			r.Status, r.Message = StatusCanceled, "A program leállt a futás közben."
+			started := r.Status == StatusRunning
+			r.Status, r.Message = StatusCanceled, MsgStoppedRunning
+			if !started {
+				r.Message = MsgStoppedQueued
+			}
 			if r.Ended.IsZero() {
 				r.Ended = r.Started
 			}
+			if r.Ended.IsZero() {
+				r.Ended = r.Queued
+			}
+			s.ResumeLater(r, started, time.Now())
+			_ = s.saveRuns()
 		}
 	}
 	return s, nil
@@ -472,6 +481,45 @@ func (s *Store) Retries() map[string]Retry {
 		out[k] = v
 	}
 	return out
+}
+
+// Messages of the runs the program's stop interrupted.
+const (
+	MsgStoppedRunning = "A program leállt a futás közben."
+	MsgStoppedQueued  = "A program leállt, mielőtt elindult."
+)
+
+// ResumeLater plans the continuation of a scheduled run that the program's
+// stop (exit, crash, restart of the computer) interrupted: it is started
+// again right after the program starts (a run older than MaxRetryAge is
+// recorded as missed then). A run that was going counts as a try; it is
+// continued once even if the job has no retries, but never more often than
+// that or than the retries allow. It notes this in run's message.
+func (s *Store) ResumeLater(run *Run, started bool, now time.Time) bool {
+	if run.Trigger != "ütemezett" {
+		return false // a manual run is not repeated on its own
+	}
+	j, ok := s.Job(run.JobID)
+	if !ok || !j.Scheduled || !j.Enabled {
+		return false
+	}
+	if _, ok := s.PendingRetry(j.ID); ok {
+		return false
+	}
+	attempt := max(run.Attempt, 1)
+	if started {
+		attempt++
+	}
+	if attempt > max(j.RetryCount+1, 2) {
+		return false
+	}
+	rt := Retry{At: now, Attempt: attempt, Of: max(j.RetryCount+1, attempt), Trigger: run.Trigger, Due: run.Due}
+	if err := s.SetRetry(j.ID, rt); err != nil {
+		return false
+	}
+	run.NextRetry = now
+	run.Message += fmt.Sprintf("\nA program következő indulásakor újra elindul (%d/%d. próbálkozás).", rt.Attempt, rt.Of)
+	return true
 }
 
 // SetRetry records a pending retry of a job (not kept if it cannot be saved).

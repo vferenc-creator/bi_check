@@ -109,7 +109,4 @@ func TestKnimeDurations(t *testing.T) {
 	if ds, med := knimeDurations(nil); len(ds) != 0 || med != 0 {
 		t.Fatal("empty")
 	}
-	if tailFile("/nincs/ilyen", 5) != "" {
-		t.Fatal("missing file")
-	}
 }

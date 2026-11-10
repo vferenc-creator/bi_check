@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,9 +86,16 @@ func TestKnimeShare(t *testing.T) {
 	if n := p.notes(); len(n) != 1 || !strings.Contains(n[0], "KNIME (EF-BI): Esti töltés") || !strings.Contains(n[0], "Hibás csomópont: DB Reader (#3:12) – Execute failed: Login failed") || strings.Contains(n[0], "részletek") {
 		t.Fatalf("%v", n)
 	}
-	// the server stops reporting → once; reporting again → once
-	srv.Updated = now.Add(-30 * time.Minute)
-	write()
+	// the server stops reporting (its file does not change for 30 minutes
+	// by our clock) → once; reporting again → once
+	var clk struct {
+		sync.Mutex
+		off time.Duration
+	}
+	a.kn.share.now = func() time.Time { clk.Lock(); defer clk.Unlock(); return time.Now().Add(clk.off) }
+	clk.Lock()
+	clk.off = 30 * time.Minute
+	clk.Unlock()
 	a.knimeShareStep()
 	a.knimeShareStep()
 	if n := p.notes(); len(n) != 2 || !strings.Contains(n[1], "nem jelentkezik") {
@@ -97,7 +105,7 @@ func TestKnimeShare(t *testing.T) {
 	if !v.Remote[0].Stale {
 		t.Fatal("stale in the view")
 	}
-	srv.Updated = time.Now()
+	srv.Updated = time.Now() // its clock is 30 minutes behind ours: alive all the same
 	write()
 	a.knimeShareStep()
 	if n := p.notes(); len(n) != 3 || !strings.Contains(n[2], "ismét jelentkezik") {
@@ -121,10 +129,107 @@ func TestKnimeShare(t *testing.T) {
 	if _, err := os.Stat(own); !os.IsNotExist(err) {
 		t.Fatal("our file must be removed")
 	}
-	// shared mode off: nothing shown
+	if v := call[knimeView](t, a, "knimeState", nil); v.Remote[0].Stale {
+		t.Fatal("a writer whose clock is behind is alive while its file changes")
+	}
+	// shared mode off: nothing shown, and our file does not stay behind
+	cfg.NoShare = false
+	st.SetConfig(cfg)
+	a.knimeShareStep()
+	if _, err := os.Stat(own); err != nil {
+		t.Fatal("shared again")
+	}
 	a.Settings.Update(func(s *model.Settings) error { s.Team.Enabled = false; return nil })
 	a.knimeShareStep()
 	if v := call[knimeView](t, a, "knimeState", nil); len(v.Remote) != 0 || v.Share.Team {
 		t.Fatalf("%+v", v.Share)
+	}
+	if _, err := os.Stat(own); !os.IsNotExist(err) {
+		t.Fatal("shared mode off: our file must be removed")
+	}
+}
+
+// A file left behind (silent already at the first look) is shown as silent
+// but not notified at every start; a reader whose clock is ahead does not
+// see a live server as silent; a moved shared folder keeps no file of ours.
+func TestKnimeShareClocksAndLeftovers(t *testing.T) {
+	a, p, dir := newTestApp(t)
+	shared := filepath.Join(dir, "kozos")
+	os.MkdirAll(shared, 0o755)
+	if _, err := a.Settings.Update(func(s *model.Settings) error { s.Team.Folder, s.Team.Enabled = shared, true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	old := knime.Shared{Version: 1, Host: "REGI-PC", User: "x", Updated: time.Now().Add(-40 * 24 * time.Hour), IntervalSec: 60}
+	srv := knime.Shared{Version: 1, Host: "EF-BI", User: "bi", Updated: time.Now(), IntervalSec: 60}
+	knime.WriteShared(shared, "REGI-PC__x.json", old)
+	knime.WriteShared(shared, "EF-BI__bi.json", srv)
+	// our clock is 11 minutes ahead
+	a.kn.share.now = func() time.Time { return time.Now().Add(11 * time.Minute) }
+	a.knimeShareStep()
+	if n := p.notes(); len(n) != 0 {
+		t.Fatalf("no notification at the first look: %v", n)
+	}
+	v := call[knimeView](t, a, "knimeState", nil)
+	if len(v.Remote) != 2 || v.Remote[0].Host != "EF-BI" || v.Remote[1].Host != "REGI-PC" || !v.Remote[1].Stale {
+		t.Fatalf("%+v", v.Remote)
+	}
+	// the server writes again: alive by our clock, whatever its clock says
+	srv.Updated = time.Now().Add(time.Second)
+	knime.WriteShared(shared, "EF-BI__bi.json", srv)
+	a.knimeShareStep()
+	a.knimeShareStep()
+	if v := call[knimeView](t, a, "knimeState", nil); v.Remote[0].Stale {
+		t.Fatal("clock difference counted as silence")
+	}
+	if n := p.notes(); len(n) != 0 {
+		t.Fatalf("%v", n)
+	}
+
+	// we share, then the shared folder is changed: our file leaves the old one
+	call[knime.Job](t, a, "knimeSaveJob", knimeJobSave{Job: knime.Job{Name: "x", Workflow: `C:\wf`}})
+	a.knimeShareStep()
+	own := filepath.Join(shared, knime.ShareFolder, a.knimeShareFile())
+	if _, err := os.Stat(own); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "uj-kozos")
+	os.MkdirAll(other, 0o755)
+	a.Settings.Update(func(s *model.Settings) error { s.Team.Folder = other; return nil })
+	a.knimeShareStep()
+	if _, err := os.Stat(own); !os.IsNotExist(err) {
+		t.Fatal("our file stayed in the old folder")
+	}
+	if _, err := os.Stat(filepath.Join(other, knime.ShareFolder, a.knimeShareFile())); err != nil {
+		t.Fatal("not shared in the new folder")
+	}
+
+	// the shared folder disappears: it is not created again
+	gone := filepath.Join(dir, "atnevezett")
+	a.Settings.Update(func(s *model.Settings) error { s.Team.Folder = gone; return nil })
+	a.knimeShareStep()
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Fatal("the missing shared folder was created")
+	}
+	if v := call[knimeView](t, a, "knimeState", nil); !strings.Contains(v.Share.Error, "nem írható") {
+		t.Fatalf("error not shown: %+v", v.Share)
+	}
+}
+
+// A hung shared folder: no new operation piles up behind the waiting one.
+func TestKnimeShareHung(t *testing.T) {
+	var k knimeShareState
+	release := make(chan struct{})
+	if err := k.timeout(50*time.Millisecond, func() error { <-release; return nil }); err != errShareTimeout {
+		t.Fatal(err)
+	}
+	if k.pending.Load() != 1 {
+		t.Fatal("the waiting operation is not counted")
+	}
+	close(release)
+	for i := 0; i < 50 && k.pending.Load() != 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if k.pending.Load() != 0 {
+		t.Fatal("not released")
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bimonitor/internal/knime"
@@ -28,7 +29,35 @@ type knimeShareState struct {
 	readErr   string
 	seen      map[string]map[string]bool // remote file → run IDs already known
 	stale     map[string]bool            // remote file → "not reporting" notified
+	heard     map[string]heard           // remote file → when it last changed (our clock)
+	folder    string                     // the shared folder last used (our file is there)
 	kick      chan struct{}
+	pending   atomic.Int32     // share operations still waiting for a hung folder
+	now       func() time.Time // tests
+}
+
+// heard: the computers' clocks may differ, so a remote file counts as alive
+// by when we saw its content change, not by the time written into it.
+type heard struct {
+	updated time.Time // the Updated last read
+	at      time.Time // when we read a new Updated (our clock)
+}
+
+func (k *knimeShareState) clock() time.Time {
+	if k.now != nil {
+		return k.now()
+	}
+	return time.Now()
+}
+
+// staleLocked: the remote file did not change for several heartbeats
+// (k.mu held).
+func (k *knimeShareState) staleLocked(file string, d knime.Shared, now time.Time) bool {
+	h, ok := k.heard[file]
+	if !ok {
+		return d.Stale(now)
+	}
+	return d.Stale(now.Add(h.updated.Sub(h.at))) // as if both clocks were equal
 }
 
 // knimeShareView is the sharing part of the KNIME page.
@@ -148,14 +177,38 @@ func (a *App) knimeShareStep() {
 	k := &a.kn.share
 	s := a.Settings.Get()
 	folder := strings.TrimSpace(s.Team.Folder)
-	if !s.Team.Enabled || folder == "" {
-		k.mu.Lock()
-		changed := len(k.remote) > 0
-		k.remote, k.pubErr, k.readErr, k.ownFile = nil, "", "", false
-		k.mu.Unlock()
-		if changed {
-			a.P.Push("knime", nil)
+	if !s.Team.Enabled {
+		folder = ""
+	}
+	name := a.knimeShareFile()
+	timeout := time.Duration(s.TimeoutSec+10) * time.Second
+	k.mu.Lock()
+	old := k.folder
+	if old != folder {
+		// shared mode switched off or another folder: start afresh, and our
+		// file must not stay in the old folder (the others would wait for it)
+		k.folder, k.remote, k.pubErr, k.readErr, k.ownFile = folder, nil, "", "", false
+		k.seen, k.stale, k.heard = nil, nil, nil
+	}
+	k.mu.Unlock()
+	if k.pending.Load() > 0 {
+		// the folder did not answer the previous time: no new goroutine
+		// waits for it until that one returned
+		if folder != "" {
+			k.mu.Lock()
+			k.pubErr, k.readErr = "", "A közös mappa nem válaszol (az előző művelet még tart)."
+			k.mu.Unlock()
 		}
+		a.P.Push("knime", nil)
+		return
+	}
+	if old != "" && old != folder {
+		if err := k.timeout(timeout, func() error { return knime.RemoveShared(old, name) }); err != nil {
+			log.Printf("knime közös: a régi állapotfájl nem törölhető (%s): %v", old, err)
+		}
+		a.P.Push("knime", nil)
+	}
+	if folder == "" {
 		return
 	}
 	st, r, err := a.knimeInit()
@@ -163,8 +216,6 @@ func (a *App) knimeShareStep() {
 		return
 	}
 	cfg := st.Config()
-	name := a.knimeShareFile()
-	timeout := time.Duration(s.TimeoutSec+10) * time.Second
 
 	// our state
 	var pubErr string
@@ -175,7 +226,7 @@ func (a *App) knimeShareStep() {
 	switch {
 	case !cfg.NoShare && len(jobs) > 0:
 		sh := a.knimeSnapshot(st, r)
-		if err := shareTimeout(timeout, func() error { return knime.WriteShared(folder, name, sh) }); err != nil {
+		if err := k.timeout(timeout, func() error { return knime.WriteShared(folder, name, sh) }); err != nil {
 			pubErr = "Az állapot nem írható a közös mappába: " + err.Error()
 		} else {
 			k.mu.Lock()
@@ -184,7 +235,7 @@ func (a *App) knimeShareStep() {
 		}
 	case own || cfg.NoShare || len(jobs) == 0:
 		// nothing to share (any more): the others must not wait for us
-		if err := shareTimeout(timeout, func() error { return knime.RemoveShared(folder, name) }); err == nil {
+		if err := k.timeout(timeout, func() error { return knime.RemoveShared(folder, name) }); err == nil {
 			k.mu.Lock()
 			k.ownFile = false
 			k.mu.Unlock()
@@ -194,7 +245,7 @@ func (a *App) knimeShareStep() {
 	// the others
 	var remote []knime.Remote
 	var readErr string
-	if err := shareTimeout(timeout, func() error {
+	if err := k.timeout(timeout, func() error {
 		var e error
 		remote, e = knime.ReadShared(folder, name)
 		return e
@@ -202,8 +253,25 @@ func (a *App) knimeShareStep() {
 		readErr = "A közös mappa nem olvasható: " + err.Error()
 	}
 	k.mu.Lock()
+	if k.folder != folder { // switched meanwhile
+		k.mu.Unlock()
+		return
+	}
 	k.pubErr, k.readErr = pubErr, readErr
 	if readErr == "" {
+		// a file being replaced right now may not be readable for a moment:
+		// its last good state stays until the next read
+		prev := map[string]knime.Remote{}
+		for _, rm := range k.remote {
+			if rm.Error == "" {
+				prev[rm.File] = rm
+			}
+		}
+		for i, rm := range remote {
+			if old, ok := prev[rm.File]; ok && strings.HasPrefix(rm.Error, "nem olvasható") {
+				remote[i] = old
+			}
+		}
 		k.remote = remote
 	}
 	k.mu.Unlock()
@@ -217,7 +285,7 @@ func (a *App) knimeShareStep() {
 // runs and a computer that stopped reporting (each only once).
 func (a *App) knimeRemoteNotify(remote []knime.Remote, mute bool) {
 	k := &a.kn.share
-	now := time.Now()
+	now := k.clock()
 	type note struct {
 		title, text string
 		kind        NotifyKind
@@ -227,7 +295,12 @@ func (a *App) knimeRemoteNotify(remote []knime.Remote, mute bool) {
 	if k.seen == nil {
 		k.seen, k.stale = map[string]map[string]bool{}, map[string]bool{}
 	}
+	if k.heard == nil {
+		k.heard = map[string]heard{}
+	}
+	present := map[string]bool{}
 	for _, rm := range remote {
+		present[rm.File] = true
 		if rm.Error != "" {
 			continue
 		}
@@ -236,14 +309,34 @@ func (a *App) knimeRemoteNotify(remote []knime.Remote, mute bool) {
 		if who == "" {
 			who = rm.File
 		}
-		switch stale := d.Stale(now); {
-		case stale && !k.stale[rm.File]:
+		h, known := k.heard[rm.File]
+		switch {
+		case !known:
+			// first look: its own time, but never later than ours
+			at := d.Updated
+			if at.After(now) {
+				at = now
+			}
+			k.heard[rm.File] = heard{updated: d.Updated, at: at}
+		case !h.updated.Equal(d.Updated):
+			k.heard[rm.File] = heard{updated: d.Updated, at: now}
+		}
+		// k.stale: present while silent, true once notified
+		notified, silent := k.stale[rm.File]
+		switch stale := k.staleLocked(rm.File, d, now); {
+		case stale && !known:
+			// already silent at the first look (e.g. a file left behind):
+			// shown, but not notified at every start of the program
+			k.stale[rm.File] = false
+		case stale && !silent:
 			k.stale[rm.File] = true
 			notes = append(notes, note{"KNIME: " + who + " nem jelentkezik",
-				fmt.Sprintf("A(z) %s gép BI Monitorja %s óta nem írt a közös mappába – nem fut, vagy nem éri el a mappát. Az ütemezett KNIME-futtatások ott most nem biztos, hogy elindulnak.", who, d.Updated.Local().Format("01.02. 15:04")), NotifyWarning})
-		case !stale && k.stale[rm.File]:
+				fmt.Sprintf("A(z) %s gép BI Monitorja %s óta nem írt a közös mappába – nem fut, vagy nem éri el a mappát. Az ütemezett KNIME-futtatások ott most nem biztos, hogy elindulnak.", who, k.heard[rm.File].at.Local().Format("01.02. 15:04")), NotifyWarning})
+		case !stale && silent:
 			delete(k.stale, rm.File)
-			notes = append(notes, note{"KNIME: " + who + " ismét jelentkezik", "A BI Monitor újra fut azon a gépen.", NotifyInfo})
+			if notified {
+				notes = append(notes, note{"KNIME: " + who + " ismét jelentkezik", "A BI Monitor újra fut azon a gépen.", NotifyInfo})
+			}
 		}
 		seen, known := k.seen[rm.File]
 		if !known {
@@ -264,6 +357,21 @@ func (a *App) knimeRemoteNotify(remote []knime.Remote, mute bool) {
 				notes = append(notes, note{"KNIME (" + who + "): " + run.JobName, msg, NotifyError})
 			}
 		}
+		// only the runs still in the file are kept (they never come back)
+		inFile := make(map[string]bool, len(d.Runs))
+		for _, run := range d.Runs {
+			if seen[run.ID] {
+				inFile[run.ID] = true
+			}
+		}
+		k.seen[rm.File] = inFile
+	}
+	for f := range k.heard { // files gone: forget them
+		if !present[f] {
+			delete(k.heard, f)
+			delete(k.seen, f)
+			delete(k.stale, f)
+		}
 	}
 	k.mu.Unlock()
 	for _, n := range notes {
@@ -282,9 +390,9 @@ func (a *App) knimeShareViews() (knimeShareView, []knimeRemoteView) {
 	if v.Team {
 		v.Folder = strings.TrimRight(s.Team.Folder, `\/`) + `\` + knime.ShareFolder
 	}
-	now := time.Now()
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	now := k.clock()
 	v.Sharing = k.ownFile
 	if !k.published.IsZero() {
 		t := k.published
@@ -300,7 +408,7 @@ func (a *App) knimeShareViews() (knimeShareView, []knimeRemoteView) {
 	}
 	for _, rm := range k.remote {
 		d := rm.Data
-		rv := knimeRemoteView{File: rm.File, Host: d.Host, User: d.Display, App: d.App, Updated: d.Updated, Stale: rm.Error == "" && d.Stale(now),
+		rv := knimeRemoteView{File: rm.File, Host: d.Host, User: d.Display, App: d.App, Updated: d.Updated, Stale: rm.Error == "" && k.staleLocked(rm.File, d, now),
 			KNIME: d.KNIME, NodePit: d.NodePit, Jobs: d.Jobs, Runs: d.Runs, Error: rm.Error}
 		if rv.User == "" {
 			rv.User = d.User
@@ -321,10 +429,15 @@ func (a *App) knimeShareViews() (knimeShareView, []knimeRemoteView) {
 
 var errShareTimeout = errors.New("időtúllépés (a közös mappa nem válaszol)")
 
-// shareTimeout: a network share that hangs must not block the program.
-func shareTimeout(d time.Duration, op func() error) error {
+// timeout: a network share that hangs must not block the program; the
+// operation still waiting is counted, so no new one piles up behind it.
+func (k *knimeShareState) timeout(d time.Duration, op func() error) error {
 	ch := make(chan error, 1)
-	go func() { ch <- op() }()
+	k.pending.Add(1)
+	go func() {
+		defer k.pending.Add(-1)
+		ch <- op()
+	}()
 	select {
 	case err := <-ch:
 		return err

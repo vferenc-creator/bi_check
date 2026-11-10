@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,13 @@ func TestHelperProcess(t *testing.T) {
 		logLine("2026-11-06 08:00:01,000 : ERROR : KNIME-Worker-1-DB Reader 3:12 :  : Node : DB Reader : 3:12 : Execute failed: Login failed for user 'd.admin'")
 		fmt.Println("========= Workflow did not execute sucessfully ============")
 		os.Exit(30)
+	case "fail30b": // a later failure at another node
+		logLine("2026-11-07 08:00:01,000 : ERROR : KNIME-Worker-1-CSV Writer 3:20 :  : Node : CSV Writer : 3:20 : Execute failed: file in use")
+		os.Exit(30)
+	case "slowargs": // the live log: knime.log repeats the arguments
+		logLine("2026-11-06 08:00:00,000 : INFO : main : Arguments: " + strings.Join(args, " "))
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "locked":
 		fmt.Println("Workflow is locked by another KNIME instance")
 		os.Exit(20)
@@ -60,6 +68,22 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "badparam":
 		os.Exit(10)
+	case "rnd": // stress test: random duration and outcome
+		rand.Seed(time.Now().UnixNano() + int64(os.Getpid()))
+		d := time.Duration(20+rand.Intn(250)) * time.Millisecond
+		if rand.Intn(10) == 0 {
+			d = 2 * time.Second // slow: stopped or timed out
+		}
+		time.Sleep(d)
+		switch n := rand.Intn(20); {
+		case n < 12:
+			os.Exit(0)
+		case n < 18:
+			logLine("2026-11-10 08:00:01,000 : ERROR : KNIME-Worker-1-DB Reader 3:12 :  : Node : DB Reader : 3:12 : Execute failed: random")
+			os.Exit(30)
+		default:
+			os.Exit(10)
+		}
 	case "flaky": // fails the first time, then succeeds
 		mark := filepath.Join(args[len(args)-1], "tried")
 		if _, err := os.Stat(mark); err != nil {
@@ -322,8 +346,8 @@ func TestRunnerOutcomes(t *testing.T) {
 	}
 	time.Sleep(300 * time.Millisecond)
 	// while it runs: its log and its KNIME workspace (live log)
-	if name, data, ok := h.r.LiveLog(run.ID); !ok || name != run.ID+".log" || !strings.Contains(data, run.ID) {
-		t.Fatalf("live log: %q %q %v", name, data, ok)
+	if text, ok := h.r.LiveLog(run.ID); !ok || !strings.Contains(text, "BI Monitor – KNIME futtatás: slow2") || !strings.Contains(text, "élő") {
+		t.Fatalf("live log: %q %v", text, ok)
 	}
 	if !h.r.Cancel(run.ID) {
 		t.Fatal("cancel")
