@@ -52,19 +52,38 @@ function knRender() {
   if (!root) return;
   const v = KN.view;
   const keepScroll = $("#main").scrollTop;
-  // (the DOM append would print a null as "null": drop the empty parts)
-  clear(root).append(...[
-    h("div", { class: "page-head" },
+  const part = (key, el) => { if (el) el.dataset.knPart = key; return el; };
+  // on a computer without own jobs the other computers come first
+  const remoteFirst = !v.jobs.length && (v.remote || []).length;
+  const next = [
+    part("head", h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, "KNIME futtatás"), h("div", { class: "sub" }, "KNIME workflow-k futtatása a háttérben, ütemezve vagy kézzel (NodePit Batch)")),
       h("div", { class: "grow" }),
-      h("button", { class: "btn primary", onclick: () => knEditor(null), disabled: !knReady(v) }, icon("plus"), "Új futtatás")),
-    // on a computer without own jobs the other computers come first
-    !v.jobs.length && (v.remote || []).length ? knRemoteCard(v) : null,
-    knSetupCard(v),
-    knJobsCard(v),
-    v.jobs.length || !(v.remote || []).length ? knRemoteCard(v) : null,
-    knRunsCard(v)].filter(Boolean));
+      h("button", { class: "btn primary", onclick: () => knEditor(null), disabled: !knReady(v) }, icon("plus"), "Új futtatás"))),
+    remoteFirst ? part("remote-top", knRemoteCard(v)) : null,
+    part("setup", knSetupCard(v)),
+    part("jobs", knJobsCard(v)),
+    !remoteFirst ? part("remote", knRemoteCard(v)) : null,
+    part("runs", knRunsCard(v))].filter(Boolean); // (the DOM would print a null as "null")
+  knPatch(root, next);
   $("#main").scrollTop = keepScroll;
+}
+
+// knPatch keeps the parts of the page whose content did not change (the
+// page refreshes every few seconds: replacing all of it would flicker,
+// restart the "running" blink and lose the hover), and replaces the rest.
+function knPatch(root, next) {
+  const old = new Map();
+  for (const c of Array.from(root.children)) {
+    if (c.dataset.knPart) old.set(c.dataset.knPart, c);
+    else c.remove(); // "Betöltés…", an earlier error
+  }
+  const want = next.map(n => {
+    const o = old.get(n.dataset.knPart);
+    return o && o.outerHTML === n.outerHTML ? o : n;
+  });
+  want.forEach((el, i) => { if (root.children[i] !== el) root.insertBefore(el, root.children[i] || null); });
+  while (root.children.length > want.length) root.lastElementChild.remove();
 }
 
 function knReady(v) { return !!(v && v.install && v.install.exe && !v.install.error && v.install.nodepit); }
