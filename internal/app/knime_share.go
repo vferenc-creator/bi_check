@@ -21,6 +21,7 @@ import (
 )
 
 type knimeShareState struct {
+	step      sync.Mutex // one share step at a time
 	mu        sync.Mutex
 	remote    []knime.Remote
 	published time.Time // last successful write of our file
@@ -175,6 +176,10 @@ func (a *App) knimeSnapshot(st *knime.Store, r *knime.Runner) knime.Shared {
 // knimeShareStep publishes our state (if we have jobs) and reads the others.
 func (a *App) knimeShareStep() {
 	k := &a.kn.share
+	// the loop's step and a step asked for elsewhere must not interleave:
+	// an older reading would overwrite a newer one
+	k.step.Lock()
+	defer k.step.Unlock()
 	s := a.Settings.Get()
 	folder := strings.TrimSpace(s.Team.Folder)
 	if !s.Team.Enabled {
@@ -285,13 +290,13 @@ func (a *App) knimeShareStep() {
 // runs and a computer that stopped reporting (each only once).
 func (a *App) knimeRemoteNotify(remote []knime.Remote, mute bool) {
 	k := &a.kn.share
-	now := k.clock()
 	type note struct {
 		title, text string
 		kind        NotifyKind
 	}
 	var notes []note
 	k.mu.Lock()
+	now := k.clock()
 	if k.seen == nil {
 		k.seen, k.stale = map[string]map[string]bool{}, map[string]bool{}
 	}

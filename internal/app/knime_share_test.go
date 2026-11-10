@@ -92,7 +92,7 @@ func TestKnimeShare(t *testing.T) {
 		sync.Mutex
 		off time.Duration
 	}
-	a.kn.share.now = func() time.Time { clk.Lock(); defer clk.Unlock(); return time.Now().Add(clk.off) }
+	setShareClock(a, func() time.Time { clk.Lock(); defer clk.Unlock(); return time.Now().Add(clk.off) })
 	clk.Lock()
 	clk.off = 30 * time.Minute
 	clk.Unlock()
@@ -154,6 +154,9 @@ func TestKnimeShare(t *testing.T) {
 // see a live server as silent; a moved shared folder keeps no file of ours.
 func TestKnimeShareClocksAndLeftovers(t *testing.T) {
 	a, p, dir := newTestApp(t)
+	// our clock is 11 minutes ahead (set before the program's own share
+	// loop can look at the folder)
+	setShareClock(a, func() time.Time { return time.Now().Add(11 * time.Minute) })
 	shared := filepath.Join(dir, "kozos")
 	os.MkdirAll(shared, 0o755)
 	if _, err := a.Settings.Update(func(s *model.Settings) error { s.Team.Folder, s.Team.Enabled = shared, true; return nil }); err != nil {
@@ -163,8 +166,6 @@ func TestKnimeShareClocksAndLeftovers(t *testing.T) {
 	srv := knime.Shared{Version: 1, Host: "EF-BI", User: "bi", Updated: time.Now(), IntervalSec: 60}
 	knime.WriteShared(shared, "REGI-PC__x.json", old)
 	knime.WriteShared(shared, "EF-BI__bi.json", srv)
-	// our clock is 11 minutes ahead
-	a.kn.share.now = func() time.Time { return time.Now().Add(11 * time.Minute) }
 	a.knimeShareStep()
 	if n := p.notes(); len(n) != 0 {
 		t.Fatalf("no notification at the first look: %v", n)
@@ -232,4 +233,14 @@ func TestKnimeShareHung(t *testing.T) {
 	if k.pending.Load() != 0 {
 		t.Fatal("not released")
 	}
+}
+
+// setShareClock: the program's own share loop runs meanwhile.
+func setShareClock(a *App, now func() time.Time) {
+	k := &a.kn.share
+	k.step.Lock()
+	k.mu.Lock()
+	k.now = now
+	k.mu.Unlock()
+	k.step.Unlock()
 }
