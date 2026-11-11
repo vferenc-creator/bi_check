@@ -581,7 +581,10 @@ function applySnapshot(snap) {
   const scroll = $("#main").scrollTop;
   // The Settings page is a form: rebuilding it on every check result would
   // throw away what the user is typing (and reset the database login choice).
-  if (!$(".overlay") && S.view !== "settings") {
+  // The KNIME page does not show the checked items and refreshes itself:
+  // rebuilding it here made it flicker and jump to the top.
+  const knimeOpen = S.view === "knime" && $("#knRoot");
+  if (!$(".overlay") && S.view !== "settings" && !knimeOpen) {
     render();
     $("#main").scrollTop = scroll;
   } else {

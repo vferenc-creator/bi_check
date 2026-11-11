@@ -34,6 +34,7 @@ function knEsc(close) {
 
 views.knime = main => {
   main.append(h("div", { id: "knRoot" }, h("div", { class: "small muted" }, "Betöltés…")));
+  if (KN.view) knRender(); // coming back: the last state at once, no "Betöltés…" flash
   knLoad();
   clearInterval(KN.poll);
   KN.poll = setInterval(() => {
@@ -43,7 +44,13 @@ views.knime = main => {
 };
 
 async function knLoad() {
-  try { KN.view = await api("knimeState"); } catch (e) { const r = $("#knRoot"); if (r) clear(r).append(h("div", { class: "errbox" }, e.message || String(e))); return; }
+  try { KN.view = await api("knimeState"); } catch (e) {
+    const r = $("#knRoot");
+    // a refresh that failed once keeps what is shown (no blank page); the
+    // error box only when there is nothing to show yet
+    if (r && !r.querySelector("[data-kn-part]")) clear(r).append(h("div", { class: "errbox" }, e.message || String(e)));
+    return;
+  }
   knRender();
 }
 
@@ -66,15 +73,25 @@ function knRender() {
     !remoteFirst ? part("remote", knRemoteCard(v)) : null,
     part("runs", knRunsCard(v))].filter(Boolean); // (the DOM would print a null as "null")
   knPatch(root, next);
-  $("#main").scrollTop = keepScroll;
+  // only if it moved: setting it would stop a scroll the user is doing
+  if ($("#main").scrollTop !== keepScroll) $("#main").scrollTop = keepScroll;
 }
 
 // knPatch keeps the parts of the page whose content did not change (the
 // page refreshes every few seconds: replacing all of it would flicker,
 // restart the "running" blink and lose the hover), and replaces the rest.
 function knPatch(root, next) {
+  const cur = Array.from(root.children);
+  const same = cur.length === next.length && cur.every((c, i) => c.dataset.knPart === next[i].dataset.knPart);
+  if (same) {
+    // the usual case: the same parts in the same order; only the changed
+    // ones are swapped, in place (the others are not even touched)
+    cur.forEach((o, i) => { if (o.outerHTML !== next[i].outerHTML) o.replaceWith(next[i]); });
+    return;
+  }
+  // the first render, or a part came or went (e.g. the other computers' card)
   const old = new Map();
-  for (const c of Array.from(root.children)) {
+  for (const c of cur) {
     if (c.dataset.knPart) old.set(c.dataset.knPart, c);
     else c.remove(); // "Betöltés…", an earlier error
   }
@@ -82,8 +99,8 @@ function knPatch(root, next) {
     const o = old.get(n.dataset.knPart);
     return o && o.outerHTML === n.outerHTML ? o : n;
   });
+  for (const o of old.values()) if (!want.includes(o)) o.remove();
   want.forEach((el, i) => { if (root.children[i] !== el) root.insertBefore(el, root.children[i] || null); });
-  while (root.children.length > want.length) root.lastElementChild.remove();
 }
 
 function knReady(v) { return !!(v && v.install && v.install.exe && !v.install.error && v.install.nodepit); }
